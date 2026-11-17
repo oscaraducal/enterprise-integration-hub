@@ -9,6 +9,7 @@ import { TargetComponent } from './target.component';
 import { MappingComponent } from './mapping.component';
 import { ScenariosComponent } from './scenarios.component';
 import { DesignerComponent } from './designer/designer.component';
+import { ConnectionsComponent } from './connections.component';
 import { PIPELINE } from './catalog';
 
 /** Independently loaded dashboard sections. One failing never blanks another. */
@@ -32,6 +33,7 @@ const VIEWS: { name: View; icon: string; title: string; subtitle: string }[] = [
   { name: 'Source System', icon: '◧', title: 'Legacy CRM', subtitle: 'Source application: manages fictional customers and sales orders and exposes them over REST.' },
   { name: 'Scenarios', icon: '❖', title: 'Integration scenarios', subtitle: 'Business cases, mappings and verification for each integration.' },
   { name: 'Integration Designer', icon: '⌬', title: 'Integration Designer', subtitle: 'Design orchestration flows visually: palette, nested canvas, properties, validation and versions. Execution arrives in Milestone D.' },
+  { name: 'Connections', icon: '⚭', title: 'Connections', subtitle: 'Reusable connections to the approved internal applications. Addresses and credentials are resolved by the Hub.' },
   { name: 'Mapping Studio', icon: '⇆', title: 'Mapping Studio', subtitle: 'Source fields, transformation rules and target fields, with a side-effect-free preview.' },
   { name: 'Target System', icon: '◨', title: 'Modern ERP', subtitle: 'Target application: stores the records the Integration Hub imports, with full traceability.' },
   { name: 'Executions', icon: '⇄', title: 'Execution explorer', subtitle: 'Monitor the flow. Find the failure. Keep orders moving.' },
@@ -41,7 +43,7 @@ const VIEWS: { name: View; icon: string; title: string; subtitle: string }[] = [
 
 @Component({
   selector: 'app-root', standalone: true,
-  imports: [CommonModule, FormsModule, MatButtonModule, SourceComponent, TargetComponent, MappingComponent, ScenariosComponent, DesignerComponent],
+  imports: [CommonModule, FormsModule, MatButtonModule, SourceComponent, TargetComponent, MappingComponent, ScenariosComponent, DesignerComponent, ConnectionsComponent],
   templateUrl: './app.component.html'
 })
 export class AppComponent implements OnDestroy {
