@@ -424,3 +424,19 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# Integration Hub local state and frontend output
+.env
+.env.*
+!.env.example
+.data/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/appsettings.*.local.json
+**/node_modules/
+**/dist/
+**/.angular/
+**/coverage/
+**/playwright-report/
+**/test-results/

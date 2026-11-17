@@ -1,0 +1,213 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.RateLimiting;
+using Hub.Application;
+using Hub.Domain;
+using Hub.Infrastructure;
+using Integration.Shared;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+
+namespace Hub;
+public partial class Program
+{
+    public static async Task Main(string[] args)
+    {
+        var builder = WebApplication.CreateBuilder(args);
+        builder.AddDemoDefaults();
+        var signingKey = builder.Configuration.RequiredSetting("Jwt:Key");
+        if (Encoding.UTF8.GetByteCount(signingKey) < 32)
+            throw new InvalidOperationException("Jwt:Key must be at least 32 bytes.");
+        var demoPassword = builder.Configuration.RequiredSetting("Demo:Password");
+        if (demoPassword.Length < 12) throw new InvalidOperationException("Demo:Password must have at least 12 characters.");
+        var serviceKey = builder.Configuration.RequiredSetting("Services:ApiKey");
+        builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
+        {
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true, ValidIssuer = "integration-hub-demo",
+                ValidateAudience = true, ValidAudience = "integration-dashboard",
+                ValidateLifetime = true, ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
+                ClockSkew = TimeSpan.FromSeconds(10)
+            };
+        });
+        builder.Services.AddAuthorizationBuilder().AddPolicy("Operate", p => p.RequireRole("Operator"));
+        builder.Services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = 429;
+            options.AddPolicy("login", context => RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "local",
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) }));
+            options.AddFixedWindowLimiter("mutations", o => { o.PermitLimit = 60; o.Window = TimeSpan.FromMinutes(1); });
+        });
+        builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
+            .WithOrigins(builder.Configuration["Frontend:Origin"] ?? "http://localhost:4200").AllowAnyHeader().AllowAnyMethod()));
+        builder.Services.AddDbContext<HubDb>(o => o.UseSqlite(
+            builder.Configuration.GetConnectionString("Database") ?? "Data Source=hub.db"));
+        foreach (var name in new[] { "CRM", "ERP" })
+            builder.Services.AddHttpClient(name, client =>
+            {
+                client.BaseAddress = new Uri(builder.Configuration.RequiredSetting($"Services:{name}"));
+                client.Timeout = TimeSpan.FromSeconds(2);
+                client.DefaultRequestHeaders.Add("X-Service-Key", serviceKey);
+            });
+        builder.Services.AddScoped<IntegrationRunner>();
+        if (builder.Configuration["Worker:Enabled"] != "false")
+            builder.Services.AddHostedService<ExecutionWorker>();
+        var app = builder.Build();
+        app.UseDemoDefaults(false);
+        app.UseCors();
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.UseRateLimiter();
+        using (var scope = app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HubDb>();
+            await db.Database.EnsureCreatedAsync();
+            if (!await db.Jobs.AnyAsync())
+            {
+                db.Jobs.AddRange(Enumerable.Range(1, 8).Select(i => new JobRun
+                {
+                    Name = i % 2 == 0 ? "Demo order reconciliation" : "Demo inventory validation",
+                    Environment = i % 2 == 0 ? "DEV" : "TEST",
+                    Status = i % 3 == 0 ? "Failed" : "Completed",
+                    StartedAt = DateTime.UtcNow.AddMinutes(-i * 30),
+                    EndedAt = DateTime.UtcNow.AddMinutes(-i * 30).AddSeconds(18 + i),
+                    Details = i % 3 == 0 ? "Synthetic validation failure: inspect fictional input file schema."
+                        : "Synthetic workload completed. No external scheduler was contacted."
+                }));
+                await db.SaveChangesAsync();
+            }
+        }
+        app.MapPost("/api/auth/login", (Login input) =>
+        {
+            if (input.Username is not ("operator" or "viewer") || input.Password is null ||
+                !Hosting.EqualSecret(input.Password, demoPassword)) return Results.Unauthorized();
+            var role = input.Username == "operator" ? "Operator" : "Viewer";
+            var expires = DateTime.UtcNow.AddMinutes(30);
+            var token = new JwtSecurityToken("integration-hub-demo", "integration-dashboard",
+                [new Claim(ClaimTypes.Name, input.Username), new Claim(ClaimTypes.Role, role)],
+                expires: expires,
+                signingCredentials: new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
+                    SecurityAlgorithms.HmacSha256));
+            return Results.Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token), role, expiresAt = expires });
+        }).RequireRateLimiting("login");
+        var api = app.MapGroup("/api").RequireAuthorization();
+        api.MapGet("/scenarios", () => Scenarios.All);
+        api.MapGet("/orders", async (IHttpClientFactory factory, CancellationToken ct) =>
+        {
+            try
+            {
+                using var response = await factory.CreateClient("CRM").GetAsync("api/orders", ct);
+                if (!response.IsSuccessStatusCode) return Results.Problem(statusCode: 502, title: "Mock CRM unavailable");
+                return Results.Ok(await response.Content.ReadFromJsonAsync<CrmOrder[]>(ct));
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            { return Results.Problem(statusCode: 502, title: "Mock CRM unavailable"); }
+        });
+        api.MapGet("/metrics", async (HubDb db) =>
+        {
+            var total = await db.Executions.CountAsync();
+            var completed = await db.Executions.CountAsync(x => x.Status == "Completed");
+            var failed = await db.Executions.CountAsync(x => x.Status == "Failed");
+            var durations = await db.Executions.Where(x => x.DurationMs != null).Select(x => x.DurationMs!.Value).ToListAsync();
+            var statuses = await db.Executions.GroupBy(x => x.Status).Select(g => new { status = g.Key, count = g.Count() }).ToListAsync();
+            return Results.Ok(new { total, completed, failed, successRate = total == 0 ? 0 : Math.Round(100.0 * completed / total, 1),
+                averageDurationMs = durations.Count == 0 ? 0 : durations.Average(), statuses });
+        });
+        api.MapGet("/executions", async (string? search, string? status, string? environment, int? page, HubDb db) =>
+        {
+            if (search?.Length > 64 || (status is not null && !Statuses.All.Contains(status)) ||
+                (environment is not null && environment is not ("DEV" or "TEST"))) return Results.BadRequest();
+            var query = db.Executions.AsNoTracking().AsQueryable();
+            if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.Id.Contains(search));
+            if (status is not null) query = query.Where(x => x.Status == status);
+            if (environment is not null) query = query.Where(x => x.Environment == environment);
+            var count = await query.CountAsync();
+            var currentPage = Math.Clamp(page ?? 1, 1, 100000);
+            var items = await query.OrderByDescending(x => x.CreatedAt).Skip((currentPage - 1) * 20).Take(20)
+                .Select(x => new { x.Id, x.OrderId, x.Status, x.Environment, x.CreatedAt, x.DurationMs, x.Attempts, x.ErrorClass }).ToListAsync();
+            return Results.Ok(new { items, total = count, page = currentPage, pageSize = 20 });
+        });
+        api.MapGet("/executions/{id}", async (string id, HubDb db) =>
+        {
+            var execution = await db.Executions.AsNoTracking().Include(x => x.Logs.OrderBy(l => l.Id)).SingleOrDefaultAsync(x => x.Id == id);
+            return execution is null ? Results.NotFound() : Results.Ok(execution);
+        });
+        api.MapPost("/executions", async (StartExecution input, HubDb db) =>
+        {
+            if (string.IsNullOrWhiteSpace(input.OrderId) || input.OrderId.Length > 60 ||
+                input.Environment is not ("DEV" or "TEST") || !Scenarios.All.Contains(input.Scenario) ||
+                input.Target is not ("CRM" or "ERP") || input.FailuresBeforeSuccess is < 0 or > 3 ||
+                (input.Scenario == "Validation" && input.Target != "CRM") ||
+                (input.Scenario == "Duplicate" && input.Target != "ERP")) return Results.BadRequest();
+            var existing = await db.Executions.AsNoTracking().SingleOrDefaultAsync(x => x.OrderId == input.OrderId);
+            if (existing is not null) return Results.Conflict(new { executionId = existing.Id, error = "Source order already tracked. Open its execution." });
+            var execution = new Execution { OrderId = input.OrderId, Environment = input.Environment,
+                Scenario = input.Scenario, Target = input.Target, FailuresBeforeSuccess = input.FailuresBeforeSuccess };
+            execution.Logs.Add(new ExecutionLog { Stage = "Queued", Message = "Queued by authenticated demo operator." });
+            db.Executions.Add(execution);
+            try { await db.SaveChangesAsync(); }
+            catch (DbUpdateException)
+            {
+                db.ChangeTracker.Clear();
+                existing = await db.Executions.AsNoTracking().SingleOrDefaultAsync(x => x.OrderId == input.OrderId);
+                if (existing is null) throw;
+                return Results.Conflict(new { executionId = existing.Id, error = "Source order already tracked." });
+            }
+            return Results.Accepted($"/api/executions/{execution.Id}", new { execution.Id });
+        }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
+        api.MapPost("/executions/{id}/retry", async (string id, HubDb db) =>
+        {
+            // Atomic state transition prevents double-clicks and concurrent operators from queuing twice.
+            await using var tx = await db.Database.BeginTransactionAsync();
+            var changed = await db.Executions.Where(x => x.Id == id && x.Status == "Failed")
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, "Pending")
+                    .SetProperty(x => x.Scenario, "None").SetProperty(x => x.Attempts, 0)
+                    .SetProperty(x => x.RetryCount, x => x.RetryCount + 1)
+                    .SetProperty(x => x.EndedAt, (DateTime?)null).SetProperty(x => x.DurationMs, (double?)null)
+                    .SetProperty(x => x.StartedAt, (DateTime?)null)
+                    .SetProperty(x => x.ErrorClass, (string?)null).SetProperty(x => x.Troubleshooting, (string?)null)
+                    .SetProperty(x => x.AvailableAt, DateTime.UtcNow));
+            if (changed == 0) return await db.Executions.AnyAsync(x => x.Id == id)
+                ? Results.Conflict(new { error = "Only failed executions can be retried." }) : Results.NotFound();
+            db.Logs.Add(new ExecutionLog { ExecutionId = id, Stage = "ManualRetry",
+                Message = "Operator requested retry. Simulation cleared; original mapped payload and order ID retained." });
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return Results.Accepted($"/api/executions/{id}", new { id });
+        }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
+        api.MapGet("/jobs", async (string? environment, HubDb db) =>
+        {
+            if (environment is not null && environment is not ("DEV" or "TEST")) return Results.BadRequest();
+            return Results.Ok(await db.Jobs.AsNoTracking().Where(x => environment == null || x.Environment == environment)
+                .OrderByDescending(x => x.StartedAt).Take(100).ToListAsync());
+        });
+        api.MapGet("/jobs/{id}", async (string id, HubDb db) =>
+        {
+            var job = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id);
+            return job is null ? Results.NotFound() : Results.Ok(job);
+        });
+        api.MapPost("/jobs/simulate", async (SimulateJob input, HubDb db) =>
+        {
+            if (input.Environment is not ("DEV" or "TEST")) return Results.BadRequest();
+            var now = DateTime.UtcNow;
+            var job = new JobRun { Name = "Demo reconciliation check", Environment = input.Environment,
+                StartedAt = now, EndedAt = now, Status = input.Fail ? "Failed" : "Completed",
+                Details = input.Fail ? "Synthetic input schema mismatch. Inspect the mock source contract and rerun the demo."
+                    : "Synthetic verification completed; no external workload platform contacted." };
+            db.Jobs.Add(job);
+            await db.SaveChangesAsync();
+            return Results.Created($"/api/jobs/{job.Id}", job);
+        }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
+        await app.RunAsync();
+    }
+}
+public record Login(string Username, string Password);
+public record StartExecution(string OrderId, string Environment = "DEV", string Scenario = "None",
+    string Target = "ERP", int FailuresBeforeSuccess = 1);
+public record SimulateJob(string Environment, bool Fail);
