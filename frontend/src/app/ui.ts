@@ -11,7 +11,7 @@ import { MatButtonModule } from '@angular/material/button';
   selector: 'app-modal', standalone: true, imports: [MatButtonModule],
   template: `
   <div class="modal-backdrop" (click)="close.emit()"></div>
-  <section class="modal panel" [class.wide]="wide" role="dialog" aria-modal="true" [attr.aria-label]="label" tabindex="-1">
+  <section class="modal panel" [class.wide]="wide" [class.medium]="medium" role="dialog" aria-modal="true" [attr.aria-label]="label" tabindex="-1">
     <header class="modal-head"><div>@if (eyebrow) { <span class="eyebrow">{{eyebrow}}</span> }<h2>{{heading}}</h2></div>
       <button mat-button type="button" class="modal-close" (click)="close.emit()" [attr.aria-label]="'Close ' + label">Close ✕</button></header>
     <div class="modal-body"><ng-content></ng-content></div>
@@ -22,6 +22,8 @@ export class ModalComponent implements AfterViewInit, OnDestroy {
   @Input() heading = '';
   @Input() eyebrow = '';
   @Input() wide = false;
+  /** A content-sized dialog for wizards (about 860 px). */
+  @Input() medium = false;
   @Output() close = new EventEmitter<void>();
   /** Open dialogs, oldest first; Escape closes only the topmost one. */
   private static stack: ModalComponent[] = [];
