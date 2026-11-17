@@ -1,3 +1,4 @@
+<router-outlet></router-outlet>
 @if (!signedIn()) {
   <main class="login-page">
     <section class="login-story">
@@ -22,25 +23,51 @@
     </section>
   </main>
 } @else {
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span><span>Integration <br><strong>Hub</strong></span></div>
-      <div class="workspace-label">DEMO WORKSPACE</div>
-      <nav aria-label="Main navigation">
-        @for(item of views; track item.name){
-          <button type="button" [attr.aria-label]="item.name" [attr.aria-current]="view() === item.name ? 'page' : null" [class.active]="view() === item.name" (click)="go(item.name)"><span aria-hidden="true">{{item.icon}}</span>{{item.name}}</button>
+  <div [class]="'app-shell ws-' + workspace()" [class.designer-mode]="designerOpen()">
+    <header class="global-bar">
+      @if (!designerOpen()) { <button type="button" class="menu-toggle" (click)="sidebarOpen.set(!sidebarOpen())" [attr.aria-expanded]="sidebarOpen()" aria-controls="workspace-sidebar" aria-label="Toggle workspace navigation">☰</button> }
+      <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span><span class="brand-name">Enterprise Integration Hub</span></div>
+      <nav class="ws-switch" aria-label="Workspaces">
+        @for (w of workspaces; track w.id) {
+          <button type="button" [class]="'ws-' + w.id" [class.active]="workspace() === w.id" [attr.aria-current]="workspace() === w.id ? 'page' : null" [attr.aria-label]="w.name" (click)="switchWorkspace(w.id)">
+            <span class="ws-icon" aria-hidden="true">{{w.icon}}</span><span class="ws-text"><b>{{w.name}}</b><small>{{w.role}}</small></span></button>
         }
       </nav>
-      <div class="sidebar-bottom"><span class="live-dot"></span> Local simulator<p>CRM → Middleware → ERP</p><small>Fictional systems. Real engineering.</small></div>
+      <div class="global-actions"><span class="demo-tag">DEMO</span><span class="role">{{role()}}</span><button mat-button (click)="toggleTheme()" aria-label="Toggle theme">{{dark() ? 'Light' : 'Dark'}}</button><button mat-button (click)="logout()">Sign out</button></div>
+    </header>
+    <div class="shell-body">
+    @if (!designerOpen()) {
+    <aside class="sidebar" id="workspace-sidebar" [class.open]="sidebarOpen()">
+      <div class="workspace-label"><span aria-hidden="true">{{workspaceInfo().icon}}</span> {{workspaceInfo().name}}<small>{{workspaceInfo().role}}</small></div>
+      @switch (workspace()) {
+        @case ('crm') {
+          <nav aria-label="Legacy CRM navigation">@for (s of crmSections; track s) {
+            <button type="button" [attr.aria-current]="activeSection() === s ? 'page' : null" [class.active]="activeSection() === s" (click)="go({ view: 'Source System', section: s })">{{s}}</button> }</nav>
+          <div class="sidebar-bottom"><span class="live-dot"></span> Source business system<p>Customers and sales orders the Hub reads.</p><small>Business data only: integration authoring lives in the Workbench.</small></div>
+        }
+        @case ('erp') {
+          <nav aria-label="Modern ERP navigation">@for (s of erpSections; track s) {
+            <button type="button" [attr.aria-current]="activeSection() === s ? 'page' : null" [class.active]="activeSection() === s" (click)="go({ view: 'Target System', section: s })">{{s}}</button> }</nav>
+          <div class="sidebar-bottom"><span class="live-dot"></span> Target business system<p>Records the Hub imports, with history.</p><small>Business data only: integration authoring lives in the Workbench.</small></div>
+        }
+        @default {
+          <nav aria-label="Integration Workbench navigation">@for (item of workbenchNav; track item.label) {
+            <button type="button" [attr.aria-label]="item.label" [attr.aria-current]="activeNav() === item.view ? 'page' : null" [class.active]="activeNav() === item.view" (click)="go(item.view)"><span aria-hidden="true">{{item.icon}}</span>{{item.label}}</button> }</nav>
+          <div class="sidebar-bottom"><span class="live-dot"></span> Local integration workbench<p>Legacy CRM → Hub → Modern ERP</p><small>Design-time only for new integrations. Fictional systems, synthetic data.</small></div>
+        }
+      }
     </aside>
+    @if (sidebarOpen()) { <div class="sidebar-scrim" (click)="sidebarOpen.set(false)" aria-hidden="true"></div> }
+    }
     <div class="workspace">
-      <header class="topbar"><span>Workspace <b>/ {{view()}}</b></span><div><span class="demo-tag">DEMO</span><span class="role">{{role()}}</span><button mat-button (click)="toggleTheme()" aria-label="Toggle theme">{{dark() ? 'Light' : 'Dark'}} theme</button><button mat-button (click)="logout()">Sign out</button></div></header>
-      <main class="content">
-        <div class="page-heading"><div><span class="eyebrow">INTEGRATION OPERATIONS</span><h1>{{viewInfo().title}}</h1><p class="muted">{{viewInfo().subtitle}}</p></div>
+      <main class="content" [class.designer-content]="designerOpen()">
+        @if (!designerOpen()) {
+        <div class="page-heading"><div><span class="eyebrow">{{workspaceInfo().name.toUpperCase()}} · {{workspaceInfo().role.toUpperCase()}}</span><h1>{{viewInfo().title}}</h1><p class="muted">{{viewInfo().subtitle}}</p></div>
           <button mat-stroked-button class="refresh-button" (click)="manualRefresh()" [disabled]="refreshing()" [attr.aria-busy]="refreshing()"><span aria-hidden="true">↻</span>&nbsp;Refresh</button></div>
+        }
         @if(error()){ <div class="alert error" role="alert">{{error()}} <button type="button" (click)="error.set('')" aria-label="Dismiss error">×</button></div> }
         @if(notice()){ <div class="alert success" role="status">{{notice()}} <button type="button" (click)="notice.set('')" aria-label="Dismiss notification">×</button></div> }
-        @if(degraded().length){
+        @if(degraded().length && (view() === 'Executions' || view() === 'Workloads')){
           <div class="alert warning" role="status" aria-label="Partial outage">
             <b>Some data could not be refreshed.</b> Everything else on this page is still updating.
             <ul>@for(d of degraded(); track d.section){
@@ -48,14 +75,26 @@
             }</ul>
           </div>
         }
-        @if(view() === 'Source System'){ <app-source [api]="api" [focus]="focus()" [refreshTick]="tick()"></app-source> }
-        @else if(view() === 'Target System'){ <app-target [api]="api" [focus]="focus()" [refreshTick]="tick()" (inspect)="openExecution($event)" (open)="go($event)"></app-target> }
-        @else if(view() === 'Integration Designer'){ <app-designer [api]="api"></app-designer> }
-        @else if(view() === 'Connections'){ <app-connections [api]="api"></app-connections> }
+        @if (view() === 'Scenarios' || view() === 'Guides') {
+          <nav class="app-subnav monitor-tabs" aria-label="Guide sections">
+            <button type="button" [class.active]="view() === 'Scenarios'" [attr.aria-current]="view() === 'Scenarios' ? 'page' : null" (click)="go('Scenarios')">Scenario catalog</button>
+            <button type="button" [class.active]="view() === 'Guides'" [attr.aria-current]="view() === 'Guides' ? 'page' : null" (click)="go({ view: 'Guides', scenario: focus()?.scenario })">Step-by-step guides</button></nav>
+        }
+        @if (view() === 'Executions' || view() === 'Workloads') {
+          <nav class="app-subnav monitor-tabs" aria-label="Monitoring sections">
+            <button type="button" [class.active]="view() === 'Executions'" [attr.aria-current]="view() === 'Executions' ? 'page' : null" (click)="go('Executions')">Executions</button>
+            <button type="button" [class.active]="view() === 'Workloads'" [attr.aria-current]="view() === 'Workloads' ? 'page' : null" (click)="go('Workloads')">Workloads</button></nav>
+        }
+        @if(view() === 'Source System'){ <app-source [api]="api" [focus]="focus()" [refreshTick]="tick()" [showNav]="false" (sectionChange)="sectionChanged('Source System', $event)"></app-source> }
+        @else if(view() === 'Target System'){ <app-target [api]="api" [focus]="focus()" [refreshTick]="tick()" [showNav]="false" (sectionChange)="sectionChanged('Target System', $event)" (inspect)="openExecution($event)" (open)="go($event)"></app-target> }
+        @else if(view() === 'Overview'){ <app-workbench-overview [api]="api" (go)="go($event)"></app-workbench-overview> }
+        @else if(view() === 'Integrations'){ <app-integrations [api]="api" [startCreate]="!!focus()?.create" (open)="go({ view: 'Integration Designer', flow: $event })"></app-integrations> }
+        @else if(view() === 'Integration Designer'){ @for (name of [focus()?.flow ?? '']; track name) { <app-designer [api]="api" [flowName]="name" (back)="go('Integrations')"></app-designer> } }
+        @else if(view() === 'Connections'){ <app-connections [api]="api" [startCreate]="!!focus()?.create"></app-connections> }
         @else if(view() === 'Mapping Studio'){ <app-mapping [api]="api" [focus]="focus()" (inspect)="openExecution($event)"></app-mapping> }
         @else if(view() === 'Scenarios'){ <app-scenarios mode="catalog" (open)="go($event)"></app-scenarios> }
         @else if(view() === 'Guides'){ <app-scenarios mode="guides" [scenario]="focus()?.scenario" (open)="go($event)"></app-scenarios> }
-        @else if(view() === 'Overview' || view() === 'Executions'){
+        @else if(view() === 'Executions'){
           <section class="metrics" aria-label="Execution metrics" [class.stale]="section('metrics').error">
             <article class="metric panel"><span>Total executions</span><strong>{{metrics().total}}</strong><small>All environments</small></article>
             <article class="metric panel"><span>Successful</span><strong class="text-green">{{metrics().completed}}</strong><small>Confirmed by mock ERP</small></article>
@@ -63,7 +102,7 @@
             <article class="metric panel"><span>Success rate</span><strong>{{metrics().successRate}}<em>%</em></strong><small>Completed / all executions</small></article>
             <article class="metric panel"><span>Average duration</span><strong>{{duration(metrics().averageDurationMs)}}</strong><small>Finished execution cycles</small></article>
           </section>
-          @if(view() === 'Overview'){
+          @if(view() === 'Executions'){
             <section class="overview-grid">
               <article class="panel distribution"><div class="section-heading"><h2>Execution health</h2><span class="muted">All time</span></div>
                 <div class="stacked-bar" role="img" [attr.aria-label]="distributionLabel()">
@@ -94,7 +133,7 @@
               </form><p class="hint">Scenario simulates a failure (None runs normally). Validation runs against CRM; Duplicate runs against ERP. Each source record has one active execution.</p>
             </section>
           }
-          <section class="panel execution-panel" aria-labelledby="history-heading"><div class="section-heading"><h2 id="history-heading">{{view() === 'Overview' ? 'Recent executions' : 'Execution history'}}</h2><span class="muted" aria-live="polite">{{total()}} results{{filtersActive() ? ' · filtered' : ''}}</span></div>
+          <section class="panel execution-panel" aria-labelledby="history-heading"><div class="section-heading"><h2 id="history-heading">Execution history</h2><span class="muted" aria-live="polite">{{total()}} results{{filtersActive() ? ' · filtered' : ''}}</span></div>
             <form class="filters" (ngSubmit)="filter()" role="search" aria-label="Filter executions"><label class="search-field"><span class="sr-only">Search execution ID</span><input name="search" maxlength="64" [(ngModel)]="search" placeholder="Search by execution ID…"></label>
               <label><span class="sr-only">Status filter</span><select name="status" [ngModel]="status" (ngModelChange)="status = $event; filter()"><option value="">All statuses</option>@for(s of statuses; track s){<option>{{s}}</option>}</select></label>
               <label><span class="sr-only">Environment filter</span><select name="environment" [ngModel]="environment" (ngModelChange)="environment = $event; filter()"><option value="">All environments</option><option>DEV</option><option>TEST</option></select></label>
@@ -108,7 +147,7 @@
             </tbody></table></div>
             <nav class="pagination" aria-label="Execution history pages"><span>Page {{page()}} of {{pages()}}</span><div><button mat-button [disabled]="page() <= 1" (click)="navigatePage(-1)">Previous</button><button mat-button [disabled]="page() >= pages()" (click)="navigatePage(1)">Next</button></div></nav>
           </section>
-        } @else {
+        } @else if(view() === 'Workloads') {
           <section class="panel workload-note"><h2>Simulated workload monitoring</h2><p>This module demonstrates monitoring and investigation of lower-environment jobs. It does not connect to ESP dSeries, create schedules, or run automation scripts.</p>
           @if(role() === 'Operator'){<div class="job-actions"><label>Environment<select [(ngModel)]="runEnvironment"><option>DEV</option><option>TEST</option></select></label><button mat-stroked-button (click)="simulateJob(false)" [disabled]="busy()">Simulate success</button><button mat-stroked-button (click)="simulateJob(true)" [disabled]="busy()">Simulate failure</button></div>}</section>
           <section class="panel" aria-labelledby="jobs-heading"><div class="section-heading"><h2 id="jobs-heading">Job execution history</h2><label>Filter environment<select [ngModel]="jobEnvironment" (ngModelChange)="jobEnvironment = $event; filterJobs()"><option value="">All environments</option><option>DEV</option><option>TEST</option></select></label></div>
@@ -116,7 +155,7 @@
           </section>
           @if(job(); as j){<section class="panel investigation" aria-label="Job investigation"><div class="section-heading"><h2>Job investigation</h2><button mat-button (click)="job.set(null)">Close</button></div><code>{{j.id}}</code><h3>{{j.name}}</h3><p>{{j.details}}</p></section>}
         }
-        @if(selected(); as e){
+        @if(view() === 'Executions' && selected(); as e){
           <section class="panel investigation" id="investigation" tabindex="-1" aria-label="Execution investigation">
             <div class="section-heading"><div><span class="eyebrow">EXECUTION INVESTIGATION</span><h2>{{e.sourceId || e.orderId}} <span [class]="'pill ' + e.status">{{e.status}}</span></h2></div>
               <div class="button-row">
@@ -135,8 +174,9 @@
             </div></div>
           </section>
         }
-        <footer>Enterprise Integration Hub <span>Portfolio demonstration · Synthetic data · No OIC, Boomi or dSeries connection</span></footer>
+        @if (!designerOpen()) { <footer>Enterprise Integration Hub <span>Portfolio demonstration · Synthetic data · No OIC, Boomi or dSeries connection</span></footer> }
       </main>
+    </div>
     </div>
   </div>
 }

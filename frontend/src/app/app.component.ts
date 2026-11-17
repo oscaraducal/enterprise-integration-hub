@@ -1,4 +1,5 @@
-import { Component, OnDestroy, signal, computed } from '@angular/core';
+import { Component, OnDestroy, signal, computed, inject } from '@angular/core';
+import { ActivatedRouteSnapshot, NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -10,6 +11,11 @@ import { MappingComponent } from './mapping.component';
 import { ScenariosComponent } from './scenarios.component';
 import { DesignerComponent } from './designer/designer.component';
 import { ConnectionsComponent } from './connections.component';
+import { IntegrationsComponent } from './integrations.component';
+import { WorkbenchOverviewComponent } from './workbench-overview.component';
+import { CRM_SECTIONS } from './source.component';
+import { ERP_SECTIONS } from './target.component';
+import { DesignerSession, WORKBENCH_NAV, WORKSPACES, Workspace, sectionFromSlug, urlFor, workspaceOf } from './workspaces';
 import { PIPELINE } from './catalog';
 
 /** Independently loaded dashboard sections. One failing never blanks another. */
@@ -28,31 +34,49 @@ const emptySections = (): Record<Section, SectionState> => ({
   jobs: { error: '', updatedAt: null }, detail: { error: '', updatedAt: null }
 });
 
-const VIEWS: { name: View; icon: string; title: string; subtitle: string }[] = [
-  { name: 'Overview', icon: '◫', title: 'Operations overview', subtitle: 'Monitor the flow. Find the failure. Keep orders moving.' },
-  { name: 'Source System', icon: '◧', title: 'Legacy CRM', subtitle: 'Source application: manages fictional customers and sales orders and exposes them over REST.' },
-  { name: 'Scenarios', icon: '❖', title: 'Integration scenarios', subtitle: 'Business cases, mappings and verification for each integration.' },
-  { name: 'Integration Designer', icon: '⌬', title: 'Integration Designer', subtitle: 'Design orchestration flows visually: palette, nested canvas, properties, validation and versions. Execution arrives in Milestone D.' },
-  { name: 'Connections', icon: '⚭', title: 'Connections', subtitle: 'Reusable connections to the approved internal applications. Addresses and credentials are resolved by the Hub.' },
-  { name: 'Mapping Studio', icon: '⇆', title: 'Mapping Studio', subtitle: 'Source fields, transformation rules and target fields, with a side-effect-free preview.' },
-  { name: 'Target System', icon: '◨', title: 'Modern ERP', subtitle: 'Target application: stores the records the Integration Hub imports, with full traceability.' },
-  { name: 'Executions', icon: '⇄', title: 'Execution explorer', subtitle: 'Monitor the flow. Find the failure. Keep orders moving.' },
-  { name: 'Workloads', icon: '▤', title: 'Workload monitor', subtitle: 'Fictional DEV and TEST job history. No external scheduler connection.' },
-  { name: 'Guides', icon: '☰', title: 'Scenario guides', subtitle: 'Step-by-step walkthroughs with links straight to each screen.' },
+const VIEWS: { name: View; title: string; subtitle: string }[] = [
+  { name: 'Overview', title: 'Workbench overview', subtitle: 'Integration development at a glance: designs, connections, validation and recent runs.' },
+  { name: 'Integrations', title: 'Integrations', subtitle: 'Create, open, duplicate, import and export integration designs. Opening one enters the Designer.' },
+  { name: 'Integration Designer', title: 'Integration Designer', subtitle: '' },
+  { name: 'Connections', title: 'Connections', subtitle: 'Reusable connections to the approved internal applications. Addresses and credentials are resolved by the Hub.' },
+  { name: 'Mapping Studio', title: 'Mapping Studio', subtitle: 'Source fields, transformation rules and target fields, with a side-effect-free preview.' },
+  { name: 'Executions', title: 'Monitoring', subtitle: 'Execution history of the built-in sample integrations, investigation and safe retry. Designed integrations do not run until Milestone D.' },
+  { name: 'Workloads', title: 'Monitoring', subtitle: 'Fictional DEV and TEST job history. No external scheduler connection.' },
+  { name: 'Scenarios', title: 'Guides', subtitle: 'Business cases, mappings and verification for each integration, with step-by-step walkthroughs.' },
+  { name: 'Guides', title: 'Guides', subtitle: 'Step-by-step walkthroughs with links straight to each screen.' },
+  { name: 'Source System', title: 'Legacy CRM', subtitle: 'Source application: manages fictional customers and sales orders and exposes them over REST.' },
+  { name: 'Target System', title: 'Modern ERP', subtitle: 'Target application: stores the records the Integration Hub imports, with full traceability.' },
 ];
 
 @Component({
   selector: 'app-root', standalone: true,
-  imports: [CommonModule, FormsModule, MatButtonModule, SourceComponent, TargetComponent, MappingComponent, ScenariosComponent, DesignerComponent, ConnectionsComponent],
+  imports: [CommonModule, FormsModule, MatButtonModule, RouterOutlet, SourceComponent, TargetComponent, MappingComponent, ScenariosComponent, DesignerComponent, ConnectionsComponent,
+    IntegrationsComponent, WorkbenchOverviewComponent],
   templateUrl: './app.component.html'
 })
 export class AppComponent implements OnDestroy {
   token = ''; username = 'operator'; password = ''; role = signal('');
   signedIn = signal(false); busy = signal(false);
   error = signal(''); notice = signal(''); view = signal<View>('Overview');
-  readonly views = VIEWS;
   readonly pipeline = PIPELINE;
+  readonly workspaces = WORKSPACES;
+  readonly workbenchNav = WORKBENCH_NAV;
+  readonly crmSections = CRM_SECTIONS;
+  readonly erpSections = ERP_SECTIONS;
+  private router = inject(Router);
+  private session = inject(DesignerSession);
   viewInfo = computed(() => VIEWS.find(v => v.name === this.view()) ?? VIEWS[0]);
+  workspace = computed<Workspace>(() => workspaceOf(this.view()));
+  workspaceInfo = computed(() => WORKSPACES.find(w => w.id === this.workspace())!);
+  /** The Designer is a focused, full-screen editor: the workspace sidebar and page heading step aside. */
+  designerOpen = computed(() => this.view() === 'Integration Designer' && !!this.focus()?.flow);
+  /** Workbench nav item for the current page (the Designer belongs to Integrations; Workloads to Monitoring). */
+  activeNav = computed(() => {
+    const v = this.view();
+    return v === 'Integration Designer' ? 'Integrations' : v === 'Workloads' ? 'Executions' : v === 'Guides' ? 'Scenarios' : v;
+  });
+  activeSection = computed(() => this.focus()?.section ?? 'Dashboard');
+  sidebarOpen = signal(false);
   /** Cross-page navigation target (e.g. open C-300 in the Mapping Studio). */
   focus = signal<Focus | null>(null);
   /** Incremented by the Refresh button so feature pages reload their source/target data on demand. */
@@ -94,7 +118,29 @@ export class AppComponent implements OnDestroy {
   private sequence: Record<Section, number> = { metrics: 0, executions: 0, orders: 0, jobs: 0, detail: 0 };
   private aborter = new AbortController();
 
-  constructor() { this.applyTheme(); }
+  constructor() {
+    this.applyTheme();
+    // The URL is the source of truth for the workspace, page and focused record; back/forward and reloads restore them.
+    this.router.events.subscribe(e => { if (e instanceof NavigationEnd) this.fromRoute(); });
+  }
+  private fromRoute() {
+    let r: ActivatedRouteSnapshot = this.router.routerState.snapshot.root;
+    while (r.firstChild) r = r.firstChild;
+    const view = (r.data['view'] as View | undefined) ?? 'Overview';
+    const q = r.queryParamMap;
+    const f: Focus = { view };
+    const section = sectionFromSlug(view, r.paramMap.get('section') ?? undefined);
+    if (section) f.section = section; else if (view === 'Source System' || view === 'Target System') f.section = 'Dashboard';
+    if (r.paramMap.get('flow')) f.flow = r.paramMap.get('flow')!;
+    if (r.paramMap.get('scenario') || q.get('scenario')) f.scenario = r.paramMap.get('scenario') ?? q.get('scenario')!;
+    if (q.get('kind') === 'customer' || q.get('kind') === 'order') f.kind = q.get('kind') as Focus['kind'];
+    if (q.get('id')) f.id = q.get('id')!;
+    if (q.get('run')) f.run = true;
+    if (q.get('new')) f.create = true;
+    this.view.set(view); this.focus.set(f); this.sidebarOpen.set(false);
+    if (f.run && this.signedIn()) void this.prepareRun(f.kind === 'customer' ? 'CustomerSync' : 'SalesOrder', f.id);
+    setTimeout(() => (f.run ? document.getElementById('run-console') : document.querySelector('.content'))?.scrollIntoView({ block: 'start' }));
+  }
   ngOnDestroy() { clearInterval(this.timer); clearTimeout(this.expiryTimer); this.aborter.abort(); }
 
   private storedTheme() { try { return localStorage.getItem('hub-theme'); } catch { return null; } }
@@ -161,7 +207,9 @@ export class AppComponent implements OnDestroy {
     this.orders.set([]); this.jobs.set([]); this.job.set(null); this.sections.set(emptySections());
     this.search = ''; this.status = ''; this.environment = ''; this.jobEnvironment = '';
     this.applied.set({ search: '', status: '', environment: '' }); this.page.set(1);
-    this.orderId = ''; this.view.set('Overview'); this.focus.set(null); this.notice.set(''); this.busy.set(false);
+    this.orderId = ''; this.notice.set(''); this.busy.set(false);
+    this.session.clear();
+    void this.router.navigateByUrl('/workbench');
     this.error.set(reason);
   }
 
@@ -187,13 +235,17 @@ export class AppComponent implements OnDestroy {
   }
   private setSection(section: Section, state: SectionState) { this.sections.update(s => ({ ...s, [section]: state })); }
 
-  /** Navigates between pages, optionally focusing a record or scenario. */
+  /** Navigates between workspaces and pages through the router, optionally focusing a record, scenario or integration. */
   go(target: Focus | View) {
     const f: Focus = typeof target === 'string' ? { view: target } : { ...target };
-    this.view.set(f.view); this.focus.set(f);
-    if (f.run) void this.prepareRun(f.kind === 'customer' ? 'CustomerSync' : 'SalesOrder', f.id);
-    setTimeout(() => (f.run ? document.getElementById('run-console') : document.querySelector('.content'))?.scrollIntoView({ block: 'start' }));
+    const { path, query } = urlFor(f);
+    return this.router.navigate(path, { queryParams: query });
   }
+  /** A business application changed its own screen (e.g. "All customers →"): reflect it in the URL and sidebar. */
+  sectionChanged(view: View, section: string) {
+    if (this.focus()?.section !== section) void this.go({ view, section });
+  }
+  switchWorkspace(id: Workspace) { void this.go(WORKSPACES.find(w => w.id === id)!.home); }
   /** Selects what the run console will start, loading the CRM customer list when needed. */
   async prepareRun(kind: 'SalesOrder' | 'CustomerSync', id?: string) {
     this.runKind.set(kind);
@@ -213,7 +265,7 @@ export class AppComponent implements OnDestroy {
   }
   /** Opens an execution's investigation panel from any page. */
   async openExecution(id: string) {
-    this.view.set('Executions'); this.focus.set(null);
+    if (!(await this.go('Executions'))) return;
     await this.inspect(id); void this.refresh();
   }
   manualRefresh() {

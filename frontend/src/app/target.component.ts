@@ -28,7 +28,7 @@ const CUSTOMER_FIELDS = ['displayName', 'emailAddress', 'contactNumber', 'accoun
   <div class="business-app erp-app">
     <header class="app-bar target-tone">
       <div class="app-brand"><span class="app-logo" aria-hidden="true">ME</span><div><b>Modern ERP</b><small>Target application · customer master & order management</small></div></div>
-      <app-subnav label="Modern ERP navigation" [items]="sections" [active]="section()" (select)="go($any($event))"></app-subnav>
+      @if (showNav) { <app-subnav label="Modern ERP navigation" [items]="sections" [active]="section()" (select)="go($any($event))"></app-subnav> }
     </header>
     @if (error()) { <div class="alert error" role="alert">{{error()}} <button (click)="error.set('')" aria-label="Dismiss error">×</button></div> }
     @if (notice()) { <div class="alert success" role="status">{{notice()}} <button (click)="notice.set('')" aria-label="Dismiss notification">×</button></div> }
@@ -184,6 +184,10 @@ export class TargetComponent implements OnInit, OnChanges {
   @Input({ required: true }) api!: Api;
   @Input() focus: Focus | null = null;
   @Input() refreshTick = 0;
+  /** False when the shell's Modern ERP sidebar provides the section navigation. */
+  @Input() showNav = true;
+  /** Reports section changes so the shell can keep the URL and sidebar in sync. */
+  @Output() sectionChange = new EventEmitter<string>();
   @Output() inspect = new EventEmitter<string>();
   @Output() open = new EventEmitter<Focus>();
   readonly sections = ERP_SECTIONS;
@@ -255,7 +259,7 @@ export class TargetComponent implements OnInit, OnChanges {
     if (changes['refreshTick'] && !changes['refreshTick'].firstChange) await this.load();
     if (changes['focus'] && !changes['focus'].firstChange) this.applyFocus();
   }
-  go(section: ErpSection) { this.section.set(section); this.missing.set(''); }
+  go(section: ErpSection) { if (section !== this.section()) this.sectionChange.emit(section); this.section.set(section); this.missing.set(''); }
   private applyFocus() {
     const f = this.focus; if (!f) return;
     if (f.section && (ERP_SECTIONS as readonly string[]).includes(f.section)) this.go(f.section as ErpSection);

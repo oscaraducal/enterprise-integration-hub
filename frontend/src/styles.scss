@@ -1,5 +1,6 @@
 @use '@angular/material' as mat;
 @use 'sass:string';
+@import '@angular/cdk/overlay-prebuilt.css';
 // Material reads its font from the theme; a bare "Inter" (not bundled) made Material buttons fall back to the
 // browser default serif. Use the same full stack as native text so every control renders consistently.
 $font-stack: string.unquote("Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif");
@@ -434,13 +435,6 @@ fieldset.days{display:flex;flex-wrap:wrap;gap:4px 10px;border:0;padding:0;margin
 .trigger-setup{border-top:1px dashed var(--line);padding:8px 12px 10px;font-size:11px;color:var(--muted);display:grid;gap:6px;justify-items:start}
 .slot-btn{position:relative;z-index:1;width:22px;height:22px;border-radius:50%;background:var(--panel);border:1.5px solid var(--blue);color:var(--blue);font-size:14px;line-height:18px;padding:0;text-align:center;opacity:.75}
 .slot-btn:hover,.slot-btn:focus-visible,.slot.active .slot-btn{opacity:1;background:var(--blue);color:#fff}
-.picker{position:relative;z-index:20;width:min(520px,90vw);background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:8px;margin:4px auto}
-.picker-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
-.picker-head .tabs{width:auto}.picker-head .tabs button{font-size:11px;padding:6px 8px;min-height:32px}
-.picker-list{list-style:none;margin:6px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px;max-height:280px;overflow:auto}
-.picker-list button{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;border:1px solid transparent;background:var(--bg);color:var(--text);border-radius:7px;padding:7px 8px;min-height:44px}
-.picker-list button:hover:not(:disabled){border-color:var(--blue)}.picker-list button:disabled{opacity:.6;cursor:not-allowed}
-.picker-list b{display:block;font-size:12px}.picker-list small{display:block;font-size:10px;color:var(--muted);line-height:1.35}
 .flow-line{display:flex;flex-direction:column;align-items:center}
 .canvas.horizontal .flow-line{flex-direction:row;align-items:flex-start}
 .canvas.horizontal .seq{flex-direction:row;align-items:flex-start}
@@ -448,7 +442,6 @@ fieldset.days{display:flex;flex-wrap:wrap;gap:4px 10px;border:0;padding:0;margin
 .canvas.horizontal .slot{width:34px;min-width:34px;height:auto;min-height:60px;align-items:flex-start;padding-top:20px}
 .canvas.horizontal .slot:before{top:31px;bottom:auto;left:0;right:0;border-left:0;border-top:2px solid var(--line)}
 .canvas.horizontal .branches,.canvas.horizontal .branches.side{flex-direction:column;align-items:stretch}
-.canvas.horizontal .picker{position:absolute;margin-top:40px}
 .outline{display:grid;font-size:12px;min-width:980px;padding:8px}
 .outline-head,.outline-row{display:grid;grid-template-columns:minmax(200px,1.4fr) 140px minmax(160px,1.2fr) minmax(140px,1fr) 130px 110px minmax(160px,1.4fr);gap:10px;align-items:center;padding:6px 8px}
 .outline-head{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);border-bottom:1px solid var(--line)}
@@ -459,3 +452,130 @@ fieldset.days{display:flex;flex-wrap:wrap;gap:4px 10px;border:0;padding:0;margin
 .o-select{border:0;background:transparent;color:var(--text);text-align:left;padding:4px;font-size:12px;min-height:32px}
 .o-summary{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:800px){.choice-grid{grid-template-columns:1fr}.layout-switch button{padding:0 7px}}
+
+// ---- Milestone C.2: three application workspaces, Integration Workbench pages, full-screen Designer, floating + picker ----
+:root{--wb:#3176e9;--ws-accent:var(--wb)}
+.ws-crm{--ws-accent:var(--source)}.ws-erp{--ws-accent:var(--target)}.ws-workbench{--ws-accent:var(--wb)}
+.app-shell{display:flex;flex-direction:column;min-height:100vh}
+.global-bar{position:sticky;top:0;z-index:60;min-height:58px;display:flex;align-items:center;gap:14px;padding:6px 16px;background:var(--nav);color:#dce8f8;border-bottom:3px solid var(--ws-accent)}
+.global-bar .brand{font-size:14px;font-weight:600;color:#fff;gap:9px;flex-shrink:0}
+.global-bar .brand-mark{width:30px;height:30px;font-size:20px;border-radius:8px}
+.ws-switch{display:flex;gap:4px;margin:0 auto;background:rgba(255,255,255,.06);padding:4px;border-radius:11px}
+.ws-switch button{display:flex;align-items:center;gap:9px;padding:5px 14px;border-radius:8px;color:#9eb0c7;min-height:44px;box-shadow:none}
+.ws-switch button:hover{color:#fff;background:rgba(255,255,255,.06)}
+.ws-switch .ws-icon{font-size:18px}
+.ws-switch b{display:block;font-size:12.5px;font-weight:600;line-height:1.2}
+.ws-switch small{display:block;font-size:10px;color:#8597af;line-height:1.2}
+.ws-switch button.active{background:#fff;color:#0f2033;box-shadow:inset 0 -3px 0 var(--ws-accent)}
+.ws-switch button.active small{color:#51627a}
+.ws-switch button.ws-crm.active{--ws-accent:#7a4fd6}.ws-switch button.ws-erp.active{--ws-accent:#0f8a6c}.ws-switch button.ws-workbench.active{--ws-accent:#3176e9}
+.global-actions{display:flex;align-items:center;gap:6px;font-size:12px;color:#adc0d9;flex-shrink:0}
+.global-actions .mat-mdc-button-base{color:#dce8f8 !important}
+.global-actions .demo-tag{background:#213d61;color:#cfe0ff}
+.menu-toggle{display:none;border:0;background:transparent;color:#fff;font-size:20px;min-width:44px;min-height:44px;border-radius:8px}
+.shell-body{display:flex;flex:1;min-height:0}
+.app-shell .sidebar{position:sticky;top:61px;inset:auto;height:calc(100vh - 61px);padding:20px 14px;width:218px;overflow:auto}
+.app-shell .workspace-label{margin:2px 12px 16px;font-size:12px;letter-spacing:.2px;color:#e4edf9;font-weight:600}
+.app-shell .workspace-label small{display:block;font-size:10px;color:#8597af;font-weight:400;letter-spacing:1px;text-transform:uppercase;margin-top:2px}
+.app-shell .sidebar nav button.active{box-shadow:inset 3px 0 var(--ws-accent)}
+.app-shell .workspace{margin-left:0;flex:1;min-width:0}
+.page-heading .eyebrow{color:var(--ws-accent)}
+.sidebar-scrim{display:none}
+.designer-mode .content{max-width:none;padding:10px 14px 14px}
+.designer-mode .designer{min-height:calc(100vh - 92px)}
+.monitor-tabs{margin-bottom:16px;width:fit-content}
+@media(max-width:1200px){.app-shell .sidebar{width:190px}.ws-switch small{display:none}.ws-switch button{padding:5px 10px}}
+@media(max-width:800px){
+  .global-bar{flex-wrap:wrap;gap:6px 8px;padding:6px 10px}
+  .global-bar .brand-name{font-size:13px}
+  .global-actions .role{display:none}
+  .global-actions{margin-left:auto}
+  .ws-switch{order:3;width:100%;margin:0}
+  .ws-switch button{flex:1;justify-content:center;padding:4px 6px;min-height:44px;gap:5px}
+  .ws-switch .ws-text b{font-size:11px}
+  .ws-switch .ws-icon{display:none}
+  .menu-toggle{display:block}
+  .app-shell{display:flex}
+  .app-shell .sidebar{position:fixed;top:0;left:0;bottom:0;height:100vh;width:min(280px,82vw);z-index:80;transform:translateX(-102%);transition:transform .18s ease;padding:22px 14px}
+  .app-shell .sidebar.open{transform:none;box-shadow:0 0 40px rgba(0,0,0,.4)}
+  .app-shell .sidebar nav{display:block;margin-top:0;overflow:visible}
+  .app-shell .sidebar nav button{width:100%;justify-content:flex-start;padding:12px 14px;white-space:normal}
+  .app-shell .sidebar .workspace-label,.app-shell .sidebar .sidebar-bottom{display:block}
+  .sidebar-scrim{display:block;position:fixed;inset:0;background:rgba(5,12,22,.45);z-index:75}
+  .designer-mode .content{padding:8px}
+}
+@media(max-width:420px){.global-bar .brand-name{display:none}}
+
+// Integration Workbench overview
+.quick-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+.quick{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:center;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;color:var(--text);min-height:72px;transition:border-color .15s,transform .15s}
+.quick:hover{border-color:var(--wb);transform:translateY(-1px)}
+.quick>span{grid-row:span 2;display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#eaf1ff;color:#2e61ab;font-size:19px}
+.quick b{font-size:13px}.quick small{font-size:11px;color:var(--muted);line-height:1.35}
+.quick.primary{background:var(--wb);border-color:var(--wb);color:#fff}.quick.primary small{color:#dbe8ff}.quick.primary>span{background:rgba(255,255,255,.18);color:#fff}
+:root[data-theme=dark] .quick>span{background:#213d61;color:#cfe0ff}
+.wb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
+.wb-grid .capability{grid-column:1/-1}
+.wb-list{list-style:none;margin:8px 0 0;padding:0}
+.wb-list>li{border-top:1px solid var(--line)}.wb-list>li:first-child{border-top:0}
+.wb-list>li.hint,.wb-list>li.ok-text{padding:10px 2px}
+.wb-row,.wb-static{display:flex;justify-content:space-between;gap:12px;align-items:center;width:100%;padding:10px 4px;text-align:left;background:transparent;border:0;color:var(--text);border-radius:7px}
+.wb-row:hover{background:var(--bg)}
+.wb-main{min-width:0}.wb-main b{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wb-main small{color:var(--muted);font-size:11px}
+.wb-side{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0}.wb-side small{color:var(--muted);font-size:10px}
+.wb-stat{font-size:12px;color:var(--muted);margin:6px 0 2px}
+.cap-list{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px 18px;font-size:12.5px}
+.cap-list li{display:flex;gap:10px;align-items:center}.cap-list .pill{min-width:96px;text-align:center}
+@media(max-width:1000px){.wb-grid{grid-template-columns:1fr}}
+@media(max-width:420px){.cap-list{grid-template-columns:1fr}.cap-list li{align-items:flex-start}}
+
+// Integrations list
+.list-filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:0 23px 14px}
+.list-filters .search-field{flex:1;min-width:220px}
+.list-filters input,.list-filters select{min-height:40px}
+.link-button.strong{font-weight:650;font-size:13px;color:var(--text);text-align:left;padding:0}
+.link-button.strong:hover{color:var(--blue);text-decoration:underline}
+td.row-actions{white-space:nowrap;text-align:right}
+td small.field-warning{display:block}
+@media(max-width:800px){.list-filters{padding:0 16px 12px}.list-filters .search-field{min-width:0;flex-basis:100%}}
+
+// Full-screen Designer top bar
+.designer-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:8px 12px}
+.back-btn{border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:8px;padding:6px 12px;min-height:38px;font-weight:600;font-size:12.5px}
+.back-btn:hover{border-color:var(--blue)}
+.crumbs ol{display:flex;list-style:none;margin:0;padding:0;gap:6px;font-size:12px;color:var(--muted);align-items:center}
+.crumbs li+li::before{content:"/";margin-right:6px;color:var(--line)}
+.crumbs li[aria-current]{color:var(--text);font-weight:600}
+.designer-id{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-width:0;flex:1}
+.designer-id h1{font-size:18px;letter-spacing:-.3px;line-height:1.2}
+.designer-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto}
+.designer.palette-hidden .designer-main{grid-template-columns:minmax(0,1fr) 340px}
+@media(max-width:1200px){.designer.palette-hidden .designer-main{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:800px){.crumbs{display:none}.designer-id h1{font-size:16px}.designer-actions{margin-left:0;width:100%}}
+
+// Add action popup: a CDK overlay anchored to the +, outside the canvas flow, so it never moves nodes.
+.picker-pane .picker{width:360px;max-width:calc(100vw - 24px);max-height:min(460px,72vh);display:flex;flex-direction:column;background:var(--panel);color:var(--text);
+  border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 40px rgba(10,20,35,.28);padding:10px 10px 8px}
+.picker-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.picker-head h2{font-size:14px;font-weight:650}
+.picker-close{border:0;background:transparent;color:var(--muted);font-size:20px;line-height:1;min-width:36px;min-height:36px;border-radius:7px}
+.picker-close:hover{background:var(--bg);color:var(--text)}
+.picker-where{font-size:11px;color:var(--muted);margin:-2px 0 6px}
+.picker-search{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--input);color:var(--text);min-height:38px}
+.picker-tabs{display:flex;gap:2px;background:var(--bg);padding:3px;border-radius:8px;margin-top:8px}
+.picker-tabs button{flex:1;border:0;background:transparent;color:var(--muted);font-size:12px;font-weight:600;border-radius:6px;min-height:32px}
+.picker-tabs button.active{background:var(--panel);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.picker-list{list-style:none;margin:6px 0 0;padding:0;overflow:auto;flex:1;min-height:0}
+.picker-list li.hint{padding:12px 6px}
+.picker-group{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);padding:9px 8px 3px;font-weight:600}
+.picker-list button{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;border:1px solid transparent;background:transparent;color:var(--text);border-radius:8px;padding:7px 8px;min-height:44px}
+.picker-list button:hover:not(:disabled),.picker-list button:focus-visible{background:var(--bg);border-color:var(--line)}
+.picker-list button:disabled{opacity:.55;cursor:not-allowed}
+.picker-list .icon{display:grid;place-items:center;flex-shrink:0;width:26px;height:26px;border-radius:7px;background:#eaf1ff;color:#2e61ab;font-size:14px}
+:root[data-theme=dark] .picker-list .icon{background:#213d61;color:#cfe0ff}
+.picker-list b{display:block;font-size:12.5px;font-weight:600}.picker-list small{display:block;font-size:11px;color:var(--muted);line-height:1.35}
+.picker-sheet .picker{width:100%;max-width:none;max-height:78vh;border-radius:16px 16px 0 0;padding:12px 14px 16px}
+/* The + whose popup is open is highlighted without changing size: the canvas never shifts (drag-over still enlarges the drop slot). */
+.slot.picking .slot-btn{opacity:1;background:var(--blue);color:#fff;box-shadow:0 0 0 4px rgba(49,118,233,.22)}
+.wb-grid .wb-list{padding:0 18px 14px}.wb-grid .panel>p.hint,.wb-grid .wb-stat{padding:0 22px}
+@media(max-width:800px){.wb-grid .wb-list{padding:0 12px 12px}.wb-grid .panel>p.hint,.wb-grid .wb-stat{padding:0 16px}}

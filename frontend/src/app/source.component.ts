@@ -1,4 +1,4 @@
-import { Component, Input, OnChanges, OnInit, SimpleChanges, computed, signal } from '@angular/core';
+import { Component, EventEmitter, Input, OnChanges, OnInit, Output, SimpleChanges, computed, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -22,7 +22,7 @@ type CrmSection = typeof CRM_SECTIONS[number];
   <div class="business-app crm-app">
     <header class="app-bar source-tone">
       <div class="app-brand"><span class="app-logo" aria-hidden="true">LC</span><div><b>Legacy CRM</b><small>Source application · customer & order management</small></div></div>
-      <app-subnav label="Legacy CRM navigation" [items]="sections" [active]="section()" (select)="go($any($event))"></app-subnav>
+      @if (showNav) { <app-subnav label="Legacy CRM navigation" [items]="sections" [active]="section()" (select)="go($any($event))"></app-subnav> }
     </header>
     @if (error()) { <div class="alert error" role="alert">{{error()}} <button (click)="error.set('')" aria-label="Dismiss error">×</button></div> }
     @if (notice()) { <div class="alert success" role="status">{{notice()}} <button (click)="notice.set('')" aria-label="Dismiss notification">×</button></div> }
@@ -144,6 +144,10 @@ export class SourceComponent implements OnInit, OnChanges {
   @Input({ required: true }) api!: Api;
   @Input() focus: Focus | null = null;
   @Input() refreshTick = 0;
+  /** False when the shell's Legacy CRM sidebar provides the section navigation. */
+  @Input() showNav = true;
+  /** Reports section changes so the shell can keep the URL and sidebar in sync. */
+  @Output() sectionChange = new EventEmitter<string>();
   readonly sections = CRM_SECTIONS;
   readonly system = SYSTEMS.crm;
   section = signal<CrmSection>('Dashboard');
@@ -195,6 +199,7 @@ export class SourceComponent implements OnInit, OnChanges {
   orderQuery = signal('');
   go(section: CrmSection) {
     if (section !== this.section() && section !== 'Sales Orders') this.orderQuery.set('');
+    if (section !== this.section()) this.sectionChange.emit(section);
     this.section.set(section);
   }
   private applyFocus() {

@@ -107,7 +107,7 @@ export const SCENARIOS: ScenarioDef[] = [
       'Versions shows v1; editing the draft afterwards never changes v1.', 'Executions shows no new run: designing never calls the ERP.'],
     doc: DESIGNER_DOC,
     steps: [
-      { text: 'Open the Integration Designer and click + New integration (Operator).', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'In the Integration Workbench, open Integrations and click Create integration (Operator).', go: { view: 'Integrations' }, label: 'Open Integrations' },
       { text: 'Choose Manual practice, name it "Customer Sync" (identifier CUSTOMER_SYNC), then pick the starter template "Legacy CRM customer → Modern ERP customer".', detail: 'Blank is the default; templates are an explicit, optional choice.' },
       { text: 'Select readCustomer. It is an Invoke: crm.customers, operation get, key $trigger.customerId. Only list and get exist for the CRM.' },
       { text: 'Select checkEmail. Its case "Email missing" holds a Throw New Fault; Otherwise continues.' },
@@ -129,7 +129,7 @@ export const SCENARIOS: ScenarioDef[] = [
     verify: ['Changing the file name to ../secret.xml shows "Paths are not allowed".', 'Undo restores it and the flow is valid again.'],
     doc: DESIGNER_DOC,
     steps: [
-      { text: 'New integration → Manual practice → starter template "Legacy CRM order → staged XML file".', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'Integrations → Create integration → Manual practice → starter template "Legacy CRM order → staged XML file".', go: { view: 'Integrations' }, label: 'Open Integrations' },
       { text: 'Select writeOrderXml: operation Write file, format xml, root SalesOrders, record SalesOrder, data $mapOrder.' },
       { text: 'Change the file name to ../secret.xml and read the problem; press Undo (Ctrl+Z).' },
       { text: 'Open the Stage File operation list: planned operations are visible but disabled.' },
@@ -149,7 +149,7 @@ export const SCENARIOS: ScenarioDef[] = [
     verify: ['Referencing $order after the loop shows "unknown variable $order".', 'Re-throw Fault outside a handler is an error; inside a Scope fault handler it is valid.'],
     doc: DESIGNER_DOC,
     steps: [
-      { text: 'New integration → Manual practice → starter template "Review CRM orders (loop and branch)".', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'Integrations → Create integration → Manual practice → starter template "Review CRM orders (loop and branch)".', go: { view: 'Integrations' }, label: 'Open Integrations' },
       { text: 'Collapse eachOrder to see "3 inside", expand it again, and search for logUnsupported.' },
       { text: 'Select logSummary and set its message to $order.id: the Problems tab reports the out-of-scope variable. Undo.' },
       { text: 'Drag a Scope into the main flow, then drag a Throw New Fault into its body and a Re-throw Fault into its fault handler.' },
@@ -172,7 +172,7 @@ export const SCENARIOS: ScenarioDef[] = [
     doc: DESIGNER_DOC,
     steps: [
       { text: 'In Connections, create LEGACY_CRM_REST and MODERN_ERP_REST (role Invoke) and HUB_REST_TRIGGER (role Trigger, Integration Hub REST trigger). Test each one.', go: { view: 'Connections' }, label: 'Connections' },
-      { text: 'In the Designer: + New integration → Application → name "Account Sync" → Create. Only the Start trigger is on the canvas.', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'Integrations → Create integration → Application → name "Account Sync" → Create. The full-screen Designer opens with only the Start trigger and a +.', go: { view: 'Integrations' }, label: 'Open Integrations' },
       { text: 'Click Configure trigger…: choose HUB_REST_TRIGGER, POST /accounts/{customerId}, request crm.customers, response erp.customer_master.' },
       { text: 'Click + below Start → Connections / Invokes → Invoke Legacy CRM REST → GET /customers/{customerId} with key $trigger.customerId.' },
       { text: 'Click + below it → Invoke Modern ERP REST → PUT /customer_master/{accountCode}. A request mapping appears before the Invoke; set its source and open the field mapper.' },

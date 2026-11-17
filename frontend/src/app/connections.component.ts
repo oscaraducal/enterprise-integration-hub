@@ -166,6 +166,8 @@ export const toIdentifier = (name: string) => name.trim().toUpperCase().replace(
 })
 export class ConnectionsComponent implements OnInit {
   api = input.required<Api>();
+  /** Opens the connection wizard immediately (e.g. from the Workbench overview). */
+  startCreate = input(false);
   readonly steps = STEPS; roleLabel = roleLabel; toIdentifier = toIdentifier;
   applications = signal<ApplicationDef[]>([]); connections = signal<ConnectionView[]>([]);
   detail = signal<{ connection: ConnectionView; usage: string[] } | null>(null);
@@ -181,6 +183,7 @@ export class ConnectionsComponent implements OnInit {
     try {
       const [apps, conns] = await Promise.all([this.api().request<ApplicationDef[]>('connections/applications'), this.api().request<ConnectionView[]>('connections')]);
       this.applications.set(apps); this.connections.set(conns);
+      if (this.startCreate() && this.api().operator()) this.startWizard();
     } catch (e) { this.fail(e); }
   }
   async reload() { this.connections.set(await this.api().request<ConnectionView[]>('connections')); }

@@ -1,4 +1,7 @@
-import { Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, computed, input, signal } from '@angular/core';
+import { Component, ElementRef, HostListener, OnDestroy, OnInit, TemplateRef, ViewChild, ViewContainerRef, computed, effect, inject, input, output, signal } from '@angular/core';
+import { Overlay, OverlayRef } from '@angular/cdk/overlay';
+import { CdkScrollable } from '@angular/cdk/scrolling';
+import { TemplatePortal } from '@angular/cdk/portal';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -11,15 +14,17 @@ import {
 } from './flow-model';
 import { NodePropertiesComponent } from './properties.component';
 import { EndpointWizardComponent, InvokeEndpoint, TriggerEndpoint } from './endpoint-wizard.component';
-import { ConnectionView, toIdentifier } from '../connections.component';
+import { ConnectionView } from '../connections.component';
+import { styleLabel } from './create-integration.component';
+import { downloadFlow } from '../integrations.component';
+import { DesignerSession } from '../workspaces';
 
-interface FlowSummary { name: string; title: string; description?: string; draftRevision: number; draftUpdatedAt: string; draftUpdatedBy: string; latestVersion: number; status: string;
-  style: string; identifier: string; versionLabel: string; tags: string[] }
 interface Current { name: string; title: string; description?: string; revision: number; versions: VersionInfo[]; style: string; identifier: string; versionLabel: string; tags: string[] }
-interface PickerItem { key: string; label: string; description: string; icon: string; reason: string; def?: ActionDef; connection?: string }
+interface PickerItem { key: string; label: string; description: string; icon: string; reason: string; def?: ActionDef; connection?: string; group?: string }
 type Layout = 'Vertical' | 'Horizontal' | 'Outline';
 const LAYOUT_KEY = 'eih.designer.layout';
-const PICKER_TABS = ['Connections / Invokes', 'Data Processing', 'Logic', 'Error Handling', 'End Actions'] as const;
+const PICKER_TABS = ['Suggestions', 'Invokes', 'Actions'] as const;
+/** Action groups listed (in this order, as one column) under the picker's Actions tab. */
 const PICKER_TYPES: Record<string, string[]> = {
   'Data Processing': ['assign', 'map', 'stageFile', 'logger', 'note', 'wait', 'dataStitch', 'dataTranslate'],
   'Logic': ['switch', 'forEach', 'while', 'scope', 'parallel'],
@@ -32,24 +37,35 @@ interface VersionInfo { version: number; title: string; publishedAt: string; pub
 const HISTORY_LIMIT = 100;
 
 /**
- * Integration Designer: an original visual editor for orchestration flows. Left: action palette. Centre: nested,
+ * Integration Designer: a full-screen editor for one integration, opened from the Integrations page. Left: action palette. Centre: nested,
  * drag-and-drop canvas. Right: properties. Bottom: problems, variables, versions and JSON. Designs are validated
  * and versioned on the server; execution arrives in Milestone D.
  */
 @Component({
-  selector: 'app-designer', standalone: true, imports: [CommonModule, FormsModule, MatButtonModule, ModalComponent, NodePropertiesComponent, EndpointWizardComponent],
+  selector: 'app-designer', standalone: true, imports: [CommonModule, FormsModule, MatButtonModule, CdkScrollable, ModalComponent, NodePropertiesComponent, EndpointWizardComponent],
   template: `
-  <div class="designer" [class.fullscreen]="fullscreen()">
-    <header class="designer-bar" role="toolbar" aria-label="Designer toolbar">
-      <div class="flow-pick">
-        <label class="sr-only" for="flowSelect">Flow</label>
-        <select id="flowSelect" aria-label="Flow" [ngModel]="current()?.name ?? ''" (ngModelChange)="requestOpen($event)">
-          <option value="" disabled>{{flows().length ? 'Choose a flow…' : 'No flows yet'}}</option>
-          @for (f of flows(); track f.name) { <option [value]="f.name">{{f.title}} ({{f.name}})</option> }</select>
-        @if (api().operator()) { <button mat-stroked-button (click)="startCreate()">+ New integration</button>
-          <button mat-button (click)="fileInput.click()">Import</button><input #fileInput type="file" accept=".json,application/json" hidden (change)="importFile($event)"> }
-      </div>
+  <div class="designer" [class.fullscreen]="fullscreen()" [class.palette-hidden]="!showPalette()">
+    <header class="designer-top" role="region" aria-label="Integration header">
+      <button type="button" class="back-btn" (click)="back.emit()" aria-label="Back to Integrations"><span aria-hidden="true">←</span> Integrations</button>
+      <nav class="crumbs" aria-label="Breadcrumb"><ol><li><button type="button" class="link-button" (click)="back.emit()">Integrations</button></li><li aria-current="page">{{current()?.title ?? flowName()}}</li></ol></nav>
       @if (current(); as c) {
+        <div class="designer-id"><h1>{{c.title}}</h1>
+          <span class="muted small"><code>{{c.identifier}}</code> · {{c.versionLabel}} · {{styleLabel(c.style)}}</span>
+          <span [class]="'pill ' + (c.versions.length ? 'Completed' : 'Pending')" aria-label="Publication status">{{c.versions.length ? 'Published v' + c.versions[0].version + ' · draft' : 'Draft'}}</span></div>
+        <div class="designer-actions">
+          <span class="save-state" [class.dirty]="dirty()" role="status">{{dirty() ? 'Unsaved changes' : 'Saved · rev ' + c.revision}}</span>
+          <span [class]="'pill ' + (report()?.valid ? 'Completed' : 'Failed')" role="status">{{report() ? (report()!.valid ? 'Valid' : errorCount() + ' error(s)') : 'Validating…'}}</span>
+          @if (!readOnly()) {
+            <button mat-stroked-button (click)="save()" [disabled]="busy() || !dirty()">Save draft</button>
+            <button mat-flat-button (click)="publish()" [disabled]="busy() || dirty() || !report()?.valid" [title]="dirty() ? 'Save the draft first' : !report()?.valid ? 'Fix errors before publishing' : 'Publish a new immutable version'">Publish</button>
+          }
+          <button mat-button (click)="exportFlow()">Export</button>
+        </div>
+      }
+    </header>
+    <div class="designer-bar" role="toolbar" aria-label="Designer toolbar">
+      @if (current(); as c) {
+        <button type="button" class="tool" (click)="showPalette.set(!showPalette())" [attr.aria-pressed]="showPalette()" aria-label="Toggle action palette" title="Show or hide the action palette">☰</button>
         <div class="tool-group" aria-label="Edit">
           <button type="button" class="tool" (click)="undo()" [disabled]="!undoStack().length || readOnly()" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
           <button type="button" class="tool" (click)="redo()" [disabled]="!redoStack().length || readOnly()" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
@@ -69,22 +85,14 @@ const HISTORY_LIMIT = 100;
           @if (search()) { <span class="muted small">{{matches().length}} match(es)</span> }
           <button type="button" class="tool" (click)="fullscreen.set(!fullscreen())" [attr.aria-pressed]="fullscreen()" aria-label="Full screen" title="Full screen">⛶</button>
         </div>
-        <div class="tool-group right">
-          <span class="save-state" [class.dirty]="dirty()" role="status">{{dirty() ? 'Unsaved changes' : 'Saved · rev ' + c.revision}}</span>
-          <span [class]="'pill ' + (report()?.valid ? 'Completed' : 'Failed')" role="status">{{report() ? (report()!.valid ? 'Valid' : errorCount() + ' error(s)') : 'Validating…'}}</span>
-          @if (!readOnly()) {
-            <button mat-stroked-button (click)="save()" [disabled]="busy() || !dirty()">Save draft</button>
-            <button mat-flat-button (click)="publish()" [disabled]="busy() || dirty() || !report()?.valid" [title]="dirty() ? 'Save the draft first' : !report()?.valid ? 'Fix errors before publishing' : 'Publish a new immutable version'">Publish</button>
-          }
-          <button mat-button (click)="exportFlow()">Export</button>
-        </div>
       }
-    </header>
+    </div>
     @if (error()) { <div class="alert error" role="alert">{{error()}} @if (conflict()) { <button class="link-button" (click)="reload()">Reload the latest draft</button> } <button (click)="error.set(''); conflict.set(false)" aria-label="Dismiss error">×</button></div> }
     @if (notice()) { <div class="alert success" role="status">{{notice()}} <button (click)="notice.set('')" aria-label="Dismiss notification">×</button></div> }
 
     @if (current(); as c) {
       <div class="designer-main">
+        @if (showPalette()) {
         <aside class="palette" aria-label="Action palette">
           <h2>Actions</h2>
           @for (cat of categories; track cat) {
@@ -98,8 +106,9 @@ const HISTORY_LIMIT = 100;
           }
           <p class="hint">Drag onto a + slot, or click to insert after the selected action. Planned actions are listed but cannot be used yet.</p>
         </aside>
+        }
 
-        <section class="canvas-wrap" #canvasWrap aria-label="Flow canvas" (click)="select(null)">
+        <section class="canvas-wrap" cdkScrollable #canvasWrap aria-label="Flow canvas" (click)="select(null)">
           @if (layout() === 'Outline') { <ng-container *ngTemplateOutlet="outline"></ng-container> } @else {
           <div class="canvas" #canvas [class.horizontal]="layout() === 'Horizontal'" [style.transform]="'scale(' + zoom() + ')'">
             <div class="flow-title"><input aria-label="Flow title" class="title-input" [ngModel]="c.title" (ngModelChange)="setTitle($event)" [disabled]="readOnly()" maxlength="80" (click)="$event.stopPropagation()">
@@ -150,10 +159,8 @@ const HISTORY_LIMIT = 100;
         }
       </section>
     } @else {
-      <section class="panel empty-designer"><h2>Integration Designer</h2>
-        <p class="muted">Design integrations visually from a palette of actions: invoke the fictional applications, assign variables, map fields, branch, loop and stage files. Designs are validated and versioned; running them arrives in Milestone D.</p>
-        @if (api().operator()) { <button mat-flat-button (click)="startCreate()">Create your first integration</button> }
-        @else { <p class="hint">Sign in as Operator to create flows.</p> }</section>
+      <section class="panel empty-designer"><h2>{{busy() ? 'Opening integration…' : 'Integration not available'}}</h2>
+        @if (!busy()) { <p class="muted">This integration could not be opened. It may have been renamed or removed.</p><button mat-flat-button (click)="back.emit()">Back to Integrations</button> }</section>
     }
   </div>
 
@@ -167,11 +174,10 @@ const HISTORY_LIMIT = 100;
     </ol>
   </ng-template>
   <ng-template #slot let-lane="lane" let-index="index">
-    <div class="slot" [class.active]="dropKey() === key(lane, index) || pickerKey() === key(lane, index)" (dragover)="allowDrop($event, lane, index)" (dragleave)="dropKey.set('')" (drop)="dropOn($event, lane, index)"
+    <div class="slot" [class.active]="dropKey() === key(lane, index)" [class.picking]="pickerKey() === key(lane, index)" (dragover)="allowDrop($event, lane, index)" (dragleave)="dropKey.set('')" (drop)="dropOn($event, lane, index)"
       [attr.data-slot]="key(lane, index)">
-      @if (!readOnly()) { <button type="button" class="slot-btn" (click)="$event.stopPropagation(); openPicker(lane, index)" [attr.aria-expanded]="pickerKey() === key(lane, index)" [attr.aria-label]="'Insert action at ' + slotLabel(lane, index)">+</button> }
+      @if (!readOnly()) { <button type="button" class="slot-btn" (click)="$event.stopPropagation(); openPicker(lane, index, $any($event.currentTarget))" [attr.aria-expanded]="pickerKey() === key(lane, index)" [attr.aria-label]="'Insert action at ' + slotLabel(lane, index)">+</button> }
       @else { <span aria-hidden="true">+</span> }</div>
-    @if (pickerKey() === key(lane, index)) { <ng-container *ngTemplateOutlet="picker; context: { lane: lane, index: index }"></ng-container> }
   </ng-template>
   <ng-template #card let-node>
     <div class="node" [class]="'node type-' + node.type" [class.selected]="selectedId() === node.id" [class.match]="isMatch(node)" [class.error]="nodeErrors(node.id) > 0"
@@ -203,14 +209,19 @@ const HISTORY_LIMIT = 100;
   </ng-template>
 
   <ng-template #picker let-lane="lane" let-index="index">
-    <div class="picker" role="dialog" [attr.aria-label]="'Insert action at ' + slotLabel(lane, index)" (click)="$event.stopPropagation()" (keydown.escape)="pickerKey.set('')">
-      <div class="picker-head"><div class="tabs" role="tablist" aria-label="Action categories">@for (t of pickerTabs; track t) { <button type="button" role="tab" [attr.aria-selected]="pickerTab() === t" [class.active]="pickerTab() === t" (click)="pickerTab.set(t)">{{t}}</button> }</div>
-        <button type="button" class="link-button" (click)="pickerKey.set('')" aria-label="Close action picker">Close</button></div>
-      <ul class="picker-list">
+    <div class="picker" role="dialog" aria-label="Add action" [attr.aria-describedby]="'picker-where'" (click)="$event.stopPropagation()" (keydown)="pickerKeys($event)">
+      <div class="picker-head"><h2>Add action</h2><button type="button" class="picker-close" (click)="closePicker()" aria-label="Close action picker">×</button></div>
+      <p class="picker-where" id="picker-where">{{slotLabel(lane, index)}}</p>
+      <input type="search" class="picker-search" aria-label="Search actions and connections" placeholder="Search actions and connections" [ngModel]="pickerQuery()" (ngModelChange)="pickerQuery.set($event)" maxlength="40">
+      @if (!pickerQuery().trim()) {
+        <div class="picker-tabs" role="tablist" aria-label="Action categories">@for (t of pickerTabs; track t) { <button type="button" role="tab" [attr.aria-selected]="pickerTab() === t" [class.active]="pickerTab() === t" (click)="pickerTab.set(t)">{{t}}</button> }</div>
+      }
+      <ul class="picker-list" [attr.aria-label]="pickerQuery().trim() ? 'Search results' : pickerTab()">
         @for (item of pickerItems(lane, index); track item.key) {
-          <li><button type="button" [disabled]="!!item.reason" (click)="pick(item, lane, index)" [attr.aria-label]="item.label + (item.reason ? ' (unavailable)' : '')">
+          @if (item.group) { <li class="picker-group" aria-hidden="true">{{item.group}}</li> }
+          <li><button type="button" [disabled]="!!item.reason" (click)="pick(item, lane, index)" [attr.aria-label]="item.label + (item.reason ? ' (unavailable)' : '')" [title]="item.reason || item.description">
             <span class="icon" aria-hidden="true">{{item.icon}}</span><span><b>{{item.label}}</b><small>{{item.reason || item.description}}</small></span></button></li>
-        } @empty { <li class="hint">{{pickerTab() === 'Connections / Invokes' ? 'No Invoke connections yet. Create one in the Connections workspace.' : 'Nothing here.'}}</li> }
+        } @empty { <li class="hint">{{pickerQuery().trim() ? 'No action or connection matches “' + pickerQuery().trim() + '”.' : pickerTab() === 'Invokes' ? 'No Invoke connections yet. Create one in Connections.' : 'Nothing available here.'}}</li> }
       </ul>
     </div>
   </ng-template>
@@ -230,40 +241,6 @@ const HISTORY_LIMIT = 100;
       }
     </div>
   </ng-template>
-  @if (create(); as w) {
-    <app-modal label="New integration" heading="Create integration" [eyebrow]="'STEP ' + (createStep() + 1) + ' OF 3 · ' + createStepNames[createStep()].toUpperCase()" [wide]="true" (close)="create.set(null)">
-      <ol class="wizard-steps" aria-label="Wizard steps">@for (s of createStepNames; track s; let i = $index) { <li [class.done]="i < createStep()" [class.current]="i === createStep()">{{i + 1}}. {{s}}</li> }</ol>
-      @switch (createStep()) {
-        @case (0) {
-          <div class="choice-grid" role="radiogroup" aria-label="Integration type">
-            @for (st of styleChoices; track st.id) { <button type="button" role="radio" class="choice" [class.selected]="w.style === st.id" [attr.aria-checked]="w.style === st.id" (click)="w.style = st.id; w.template = 'blank'"><b>{{st.title}}</b><small>{{st.text}}</small></button> }
-          </div>
-        }
-        @case (1) {
-          <div class="form-grid modal-form">
-            <label>Name<input aria-label="Integration name" [ngModel]="w.title" (ngModelChange)="setCreateName(w, $event)" maxlength="80"></label>
-            <label>Identifier<input aria-label="Integration identifier" class="mono" [ngModel]="w.identifier" (ngModelChange)="setCreateId(w, $event)" maxlength="50"></label>
-            <label>Version<input aria-label="Integration version" class="mono" [(ngModel)]="w.version" maxlength="10" placeholder="01.00.0000"></label>
-            <label>Tags (comma separated)<input aria-label="Tags" [(ngModel)]="w.tags" maxlength="200" placeholder="crm, practice"></label>
-            <label class="full">Description<input aria-label="Integration description" [(ngModel)]="w.description" maxlength="300"></label>
-          </div><p class="hint">The identifier is generated from the name in upper case. The version uses xx.xx.xxxx (default 01.00.0000).</p>
-        }
-        @case (2) {
-          <div class="choice-grid" role="radiogroup" aria-label="Start from">
-            <button type="button" role="radio" class="choice" [class.selected]="w.template === 'blank'" [attr.aria-checked]="w.template === 'blank'" (click)="w.template = 'blank'"><b>Blank (recommended)</b><small>{{blankText(w.style)}}</small></button>
-            @for (t of starterTemplates(); track t.id) { <button type="button" role="radio" class="choice" [class.selected]="w.template === t.id" [attr.aria-checked]="w.template === t.id" [disabled]="w.style !== 'manual'" (click)="w.template = t.id"
-              [attr.aria-label]="'Starter template: ' + t.title"><b>{{t.title}}</b><small>{{w.style === 'manual' ? t.description : 'Starter templates use a manual trigger: choose Manual practice to use them.'}}</small></button> }
-          </div>
-          <dl class="record-dl"><dt>Type</dt><dd>{{styleLabel(w.style)}}</dd><dt>Name</dt><dd>{{w.title}}</dd><dt>Identifier</dt><dd><code>{{w.identifier}}</code> · {{w.version}}</dd></dl>
-        }
-      }
-      @if (formError()) { <p class="inline-warning flat" role="alert">{{formError()}}</p> }
-      <div class="form-actions wizard-nav"><button mat-button (click)="createStep.set(createStep() - 1)" [disabled]="createStep() === 0">Back</button>
-        @if (createStep() < 2) { <button mat-flat-button (click)="createStep.set(createStep() + 1)" [disabled]="!createReady()">Next</button> }
-        @else { <button mat-flat-button (click)="createIntegration()" [disabled]="busy()">Create</button> }
-        <button mat-button (click)="create.set(null)">Cancel</button></div>
-    </app-modal>
-  }
   @if (wizard(); as wz) {
     <app-endpoint-wizard [api]="api()" [mode]="wz.mode" [actionName]="wz.name" [connections]="connections()" [catalogs]="tables()" [variables]="wz.variables"
       [functions]="catalog()?.functions ?? []" [initial]="wz.initial" (done)="endpointDone($event)"></app-endpoint-wizard>
@@ -275,59 +252,62 @@ const HISTORY_LIMIT = 100;
         <button mat-button (click)="impact.set(null)">Cancel</button></div>
     </app-modal>
   }
-  @if (importDoc(); as d) {
-    <app-modal label="Import flow" heading="Import flow" eyebrow="EIH-FLOW DOCUMENT" (close)="importDoc.set(null)">
-      <form class="form-grid modal-form" (ngSubmit)="confirmImport()">
-        <p class="full">{{d.doc.title || d.doc.name}} · {{d.doc.source || 'draft'}} · exported {{d.doc.exportedAt | date:'MMM d, HH:mm'}}</p>
-        <label>Import as (new flow name)<input name="in" [(ngModel)]="d.name" maxlength="60" required class="mono"></label>
-        <p class="hint full">Imports always create a new draft. Existing flows and published versions are never overwritten.</p>
-        @if (formError()) { <p class="inline-warning flat" role="alert">{{formError()}}</p> }
-        <div class="form-actions"><button mat-flat-button type="submit" [disabled]="busy()">Import</button><button mat-button type="button" (click)="importDoc.set(null)">Cancel</button></div>
-      </form>
-    </app-modal>
-  }
   @if (pendingOpen(); as p) {
     <app-modal label="Unsaved changes" heading="Discard unsaved changes?" eyebrow="CONFIRM" (close)="pendingOpen.set(null)">
-      <p>The draft of <b>{{current()?.title}}</b> has unsaved changes. {{p.action === 'version' ? 'Loading version ' + p.target + ' replaces the canvas.' : 'Opening another flow discards them.'}}</p>
+      <p>The draft of <b>{{current()?.title}}</b> has unsaved changes. Loading version {{p.target}} replaces the canvas.</p>
       <div class="form-actions"><button mat-flat-button (click)="confirmPending()">Discard changes</button><button mat-button (click)="pendingOpen.set(null)">Keep editing</button></div>
+    </app-modal>
+  }
+  @if (leaving()) {
+    <app-modal label="Leave the Designer" heading="Leave with unsaved changes?" eyebrow="UNSAVED CHANGES" (close)="resolveLeave('stay')">
+      <p><b>{{current()?.title}}</b> has changes that are not saved yet.</p>
+      <ul class="hint"><li><b>Save draft and leave</b> stores a new draft revision.</li><li><b>Keep changes for later</b> holds them in this browser tab; they are restored when you reopen this integration (until you sign out).</li></ul>
+      <div class="form-actions">@if (!readOnly()) { <button mat-flat-button (click)="resolveLeave('save')" [disabled]="busy()">Save draft and leave</button> }
+        <button mat-stroked-button (click)="resolveLeave('keep')">Keep changes for later</button>
+        <button mat-button (click)="resolveLeave('discard')">Discard changes</button>
+        <button mat-button (click)="resolveLeave('stay')">Stay</button></div>
     </app-modal>
   }`
 })
 export class DesignerComponent implements OnInit, OnDestroy {
   api = input.required<Api>();
+  /** The integration (flow name) this Designer edits. */
+  flowName = input.required<string>();
+  /** Back to the Integrations list (the route guard asks about unsaved changes). */
+  back = output<void>();
+  @ViewChild('picker') pickerTpl?: TemplateRef<unknown>;
+  private overlay = inject(Overlay);
+  private vcr = inject(ViewContainerRef);
+  private session = inject(DesignerSession);
+  private pickerRef: OverlayRef | null = null;
+  private pickerAnchor: HTMLElement | null = null;
+  private validateSeq = 0;
   @ViewChild('canvasWrap') canvasWrap?: ElementRef<HTMLElement>;
   @ViewChild('canvas') canvas?: ElementRef<HTMLElement>;
   readonly categories = CATEGORY_ORDER;
   readonly bottomTabs = ['Problems', 'Variables', 'Versions', 'JSON', 'Execution'] as const;
   catalog = signal<Catalog | null>(null);
   tables = signal<Record<SystemId, TableView[]>>({ crm: [], erp: [] });
-  flows = signal<FlowSummary[]>([]);
   current = signal<Current | null>(null);
   flow = signal<FlowDefinition>({ schemaVersion: 1, trigger: null, steps: [], globalFaultHandler: [] });
   report = signal<FlowReport | null>(null);
   undoStack = signal<string[]>([]); redoStack = signal<string[]>([]);
   dirty = signal(false); busy = signal(false); error = signal(''); notice = signal(''); conflict = signal(false); formError = signal('');
   selectedId = signal<string | null>(null); clipboard = signal<FlowNode | null>(null);
-  zoom = signal(1); search = signal(''); fullscreen = signal(false); showFault = signal(true);
+  zoom = signal(1); search = signal(''); fullscreen = signal(false); showFault = signal(true); showPalette = signal(true);
   collapsed = signal<Set<string>>(new Set()); dropKey = signal('');
   bottomTab = signal<'Problems' | 'Variables' | 'Versions' | 'JSON' | 'Execution'>('Problems');
   readonly layouts: Layout[] = ['Vertical', 'Horizontal', 'Outline'];
   readonly pickerTabs = PICKER_TABS;
-  readonly createStepNames = ['Integration type', 'Basic information', 'Create'];
-  readonly styleChoices = [
-    { id: 'application', title: 'Application', text: 'Starts when an application calls an inbound REST endpoint. Start is a trigger placeholder until you choose a Trigger connection.' },
-    { id: 'schedule', title: 'Scheduled', text: 'Starts on a schedule (manual, daily, weekly or monthly) with schedule parameters. Design-time only in this release.' },
-    { id: 'manual', title: 'Manual practice', text: 'A simplified practice mode with a built-in manual trigger and typed sample parameters. Starter templates are available.' },
-  ];
+  readonly styleLabel = styleLabel;
   layout = signal<Layout>(this.storedLayout());
   connections = signal<ConnectionView[]>([]);
-  pickerKey = signal(''); pickerTab = signal<typeof PICKER_TABS[number]>('Data Processing');
-  create = signal<{ style: string; title: string; identifier: string; idEdited: boolean; version: string; tags: string; description: string; template: string } | null>(null);
-  createStep = signal(0);
+  pickerKey = signal(''); pickerTab = signal<typeof PICKER_TABS[number]>('Suggestions'); pickerQuery = signal('');
+  /** Resolves the route guard's question when leaving with unsaved changes. */
+  leaving = signal<((choice: 'save' | 'keep' | 'discard' | 'stay') => void) | null>(null);
   wizard = signal<{ mode: 'invoke' | 'trigger'; name: string; nodeId?: string; lane?: Lane; index?: number; initial: Record<string, any> | null; variables: any[] } | null>(null);
   impact = signal<{ message: string; options: { label: string; apply: () => void }[] } | null>(null);
-  importDoc = signal<{ doc: any; name: string } | null>(null);
-  pendingOpen = signal<{ action: 'open' | 'version'; target: string } | null>(null);
+  pendingOpen = signal<{ action: 'version'; target: string } | null>(null);
   private validateTimer: ReturnType<typeof setTimeout> | undefined;
   private lastCoalesce = { key: '', at: 0 };
 
@@ -343,27 +323,51 @@ export class DesignerComponent implements OnInit, OnDestroy {
     return allNodes(this.flow()).filter(n => [n.name, n.type, n.description ?? '', this.summary(n)].some(t => t.toLowerCase().includes(q)));
   });
 
-  async ngOnInit() {
-    try {
-      const [catalog, crm, erp, flows] = await Promise.all([this.api().request<Catalog>('flows/actions'), loadTables(this.api(), 'crm'),
-        loadTables(this.api(), 'erp'), this.api().request<FlowSummary[]>('flows')]);
-      this.catalog.set(catalog); this.tables.set({ crm, erp }); this.flows.set(flows);
-      try { this.connections.set(await this.api().request<ConnectionView[]>('connections')); } catch { /* connections are optional for viewing */ }
-      if (flows.length) await this.open(flows[0].name);
-    } catch (e) { this.fail(e); }
+  constructor() {
+    // The anchored picker follows zoom and layout changes; Outline has no + slots, so it closes there.
+    effect(() => { this.zoom(); if (this.layout() === 'Outline') this.closePicker(false); else queueMicrotask(() => this.pickerRef?.updatePosition()); });
   }
-  ngOnDestroy() { clearTimeout(this.validateTimer); }
+  async ngOnInit() {
+    this.session.register(() => this.confirmLeave());
+    this.busy.set(true);
+    try {
+      const [catalog, crm, erp] = await Promise.all([this.api().request<Catalog>('flows/actions'), loadTables(this.api(), 'crm'), loadTables(this.api(), 'erp')]);
+      this.catalog.set(catalog); this.tables.set({ crm, erp });
+      try { this.connections.set(await this.api().request<ConnectionView[]>('connections')); } catch { /* connections are optional for viewing */ }
+      await this.open(this.flowName());
+      const notice = this.session.notice; this.session.notice = '';
+      if (notice && this.current()) {
+        this.notice.set(notice);
+        if (this.current()!.style === 'application' && !this.flow().steps.length) this.select(this.flow().trigger?.id ?? null);
+      }
+    } catch (e) { this.fail(e); } finally { this.busy.set(false); }
+  }
+  ngOnDestroy() { clearTimeout(this.validateTimer); this.closePicker(false); this.session.register(null); }
+
+  // ----------------------------------------------------------- leaving the Designer
+  /** Route guard: leave freely when saved; otherwise ask whether to save, keep the changes for later, discard them or stay. */
+  confirmLeave(): Promise<boolean> {
+    if (!this.dirty() || !this.current()) return Promise.resolve(true);
+    this.closePicker(false);
+    return new Promise<boolean>(resolve => this.leaving.set(async choice => {
+      if (choice === 'save') { await this.save(); if (this.dirty()) { this.leaving.set(null); resolve(false); return; } }
+      if (choice === 'keep') {
+        const c = this.current()!;
+        this.session.keep(c.name, { baseRevision: c.revision, title: c.title, definition: JSON.stringify(this.flow()), keptAt: new Date() });
+      }
+      this.leaving.set(null);
+      if (choice !== 'stay') this.dirty.set(false);
+      resolve(choice !== 'stay');
+    }));
+  }
+  resolveLeave(choice: 'save' | 'keep' | 'discard' | 'stay') { this.leaving()?.(choice); }
+  @HostListener('window:beforeunload', ['$event']) beforeUnload(e: BeforeUnloadEvent) { if (this.dirty()) { e.preventDefault(); e.returnValue = ''; } }
 
   // ----------------------------------------------------------- flows
-  async loadFlows() { this.flows.set(await this.api().request<FlowSummary[]>('flows')); }
-  requestOpen(name: string) {
-    if (this.dirty()) { this.pendingOpen.set({ action: 'open', target: name }); return; }
-    void this.open(name);
-  }
   async confirmPending() {
     const p = this.pendingOpen(); this.pendingOpen.set(null); if (!p) return;
     this.dirty.set(false);
-    if (p.action === 'open') await this.open(p.target); else await this.loadVersion(Number(p.target), true);
+    await this.loadVersion(Number(p.target), true);
   }
   async open(name: string) {
     this.busy.set(true); this.error.set(''); this.conflict.set(false);
@@ -372,6 +376,15 @@ export class DesignerComponent implements OnInit, OnDestroy {
       this.current.set({ name: f.name, title: f.title, description: f.description, revision: f.revision, versions: f.versions, style: f.style, identifier: f.identifier, versionLabel: f.versionLabel, tags: f.tags });
       this.flow.set(this.normalize(f.definition)); this.report.set(f.report);
       this.undoStack.set([]); this.redoStack.set([]); this.dirty.set(false); this.selectedId.set(null); this.collapsed.set(new Set());
+      // Changes kept when leaving earlier are restored on top of their base revision; Undo returns to the saved draft,
+      // and saving over a newer draft is refused (409) as usual.
+      const kept = this.session.take(f.name);
+      if (kept) {
+        this.undoStack.set([JSON.stringify(this.flow())]);
+        this.current.set({ ...this.current()!, title: kept.title, revision: kept.baseRevision });
+        this.flow.set(this.normalize(JSON.parse(kept.definition))); this.dirty.set(true); this.scheduleValidation();
+        this.notice.set(`Restored the unsaved changes you kept at ${kept.keptAt.toLocaleTimeString()}. Save the draft to keep them, or Undo to return to the saved draft.`);
+      }
     } catch (e) { this.fail(e); } finally { this.busy.set(false); }
   }
   reload() { this.error.set(''); this.conflict.set(false); this.dirty.set(false); const c = this.current(); if (c) void this.open(c.name); }
@@ -381,34 +394,6 @@ export class DesignerComponent implements OnInit, OnDestroy {
     if (d.trigger) fix(d.trigger); d.steps.forEach(fix); d.globalFaultHandler.forEach(fix);
     return d;
   }
-  // ----------------------------------------------------------- create integration wizard
-  startCreate() {
-    this.formError.set(''); this.createStep.set(0);
-    this.create.set({ style: 'application', title: '', identifier: '', idEdited: false, version: '01.00.0000', tags: '', description: '', template: 'blank' });
-  }
-  setCreateName(w: { title: string; identifier: string; idEdited: boolean }, title: string) { w.title = title; if (!w.idEdited) w.identifier = toIdentifier(title); }
-  setCreateId(w: { identifier: string; idEdited: boolean }, id: string) { w.identifier = id.toUpperCase(); w.idEdited = true; }
-  createReady() {
-    const w = this.create(); if (!w) return false;
-    return this.createStep() === 0 ? !!w.style : !!w.title.trim() && /^[A-Z][A-Z0-9_]{1,49}$/.test(w.identifier) && /^\d{2}\.\d{2}\.\d{4}$/.test(w.version);
-  }
-  starterTemplates() { return (this.catalog()?.templates ?? []).filter(t => t.id !== 'blank'); }
-  styleLabel(style?: string) { return style === 'application' ? 'Application' : style === 'schedule' ? 'Scheduled' : 'Manual practice'; }
-  blankText(style: string) {
-    return style === 'application' ? 'Only an unconfigured Start trigger. Choose a Trigger connection, then add actions with +.'
-      : style === 'schedule' ? 'Only a Start schedule (manual run by default). Add actions with +.' : 'Only a manual Start trigger. Add actions with +.';
-  }
-  async createIntegration() {
-    const w = this.create(); if (!w) return;
-    this.busy.set(true); this.formError.set('');
-    try {
-      const r = await this.api().request<{ name: string }>('flows', 'POST', { title: w.title.trim(), identifier: w.identifier, versionLabel: w.version, style: w.style,
-        description: w.description || null, tags: w.tags.split(',').map(t => t.trim()).filter(t => t), template: w.template });
-      this.create.set(null); await this.loadFlows(); await this.open(r.name);
-      this.notice.set(w.template === 'blank' ? `Integration "${w.title}" created with an empty canvas. Use + to add actions.` : `Integration "${w.title}" created from a starter template.`);
-      if (w.style === 'application' && w.template === 'blank') this.select(this.flow().trigger?.id ?? null);
-    } catch (e) { if (!(e instanceof SessionEnded)) this.formError.set(errorText(e)); } finally { this.busy.set(false); }
-  }
   async save() {
     const c = this.current(); if (!c) return;
     this.busy.set(true); this.error.set('');
@@ -416,7 +401,6 @@ export class DesignerComponent implements OnInit, OnDestroy {
       const r = await this.api().request<{ revision: number; report: FlowReport }>(`flows/${c.name}/draft`, 'PUT', { title: c.title, definition: this.flow(), revision: c.revision });
       this.current.set({ ...c, revision: r.revision }); this.report.set(r.report); this.dirty.set(false);
       this.notice.set(r.report.valid ? `Draft saved (revision ${r.revision}). It is valid and can be published.` : `Draft saved (revision ${r.revision}) with ${this.errorCount()} error(s) to fix before publishing.`);
-      void this.loadFlows();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) this.conflict.set(true);
       this.fail(e);
@@ -428,7 +412,7 @@ export class DesignerComponent implements OnInit, OnDestroy {
     try {
       const r = await this.api().request<{ version: number }>(`flows/${c.name}/publish`, 'POST', { revision: c.revision });
       this.notice.set(`Published version ${r.version}. It is immutable; keep editing the draft for the next version.`);
-      await this.open(c.name); await this.loadFlows(); this.bottomTab.set('Versions');
+      await this.open(c.name); this.bottomTab.set('Versions');
     } catch (e) {
       if (e instanceof ApiError && e.body?.report) this.report.set(e.body.report);
       if (e instanceof ApiError && e.status === 409) this.conflict.set(true);
@@ -447,34 +431,10 @@ export class DesignerComponent implements OnInit, OnDestroy {
   async exportFlow(version?: number) {
     const c = this.current(); if (!c) return;
     try {
-      const doc = await this.api().request<unknown>(`flows/${c.name}/export${version ? '?version=' + version : ''}`);
-      const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
-      const a = document.createElement('a'); a.href = url; a.download = `${c.name}${version ? '-v' + version : '-draft'}.eih-flow.json`; a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await downloadFlow(this.api(), c.name, version);
       this.notice.set(`Exported ${version ? 'version ' + version : 'the saved draft'} as an eih-flow document.`);
     } catch (e) { this.fail(e); }
   }
-  async importFile(event: Event) {
-    const file = (event.target as HTMLInputElement).files?.[0]; (event.target as HTMLInputElement).value = '';
-    if (!file) return;
-    if (file.size > 262144) { this.error.set('The file is larger than 256 KB.'); return; }
-    try {
-      const doc = JSON.parse(await file.text());
-      if (doc?.format !== 'eih-flow') { this.error.set('This is not an eih-flow document.'); return; }
-      this.formError.set('');
-      this.importDoc.set({ doc, name: this.flows().some(f => f.name === doc.name) ? `${doc.name}-copy` : doc.name ?? '' });
-    } catch { this.error.set('The file is not valid JSON.'); }
-  }
-  async confirmImport() {
-    const d = this.importDoc(); if (!d) return;
-    this.busy.set(true); this.formError.set('');
-    try {
-      await this.api().request('flows/import', 'POST', { document: d.doc, name: d.name.trim() });
-      this.importDoc.set(null); await this.loadFlows(); await this.open(d.name.trim());
-      this.notice.set(`Imported as a new draft "${d.name}".`);
-    } catch (e) { if (!(e instanceof SessionEnded)) this.formError.set(errorText(e)); } finally { this.busy.set(false); }
-  }
-
   // ----------------------------------------------------------- editing with undo history
   /** Applies a change to a copy of the flow, recording the previous state. Rapid edits to one field coalesce into one undo step. */
   commit(mutate: (draft: FlowDefinition) => FlowDefinition | void, coalesceKey = '') {
@@ -504,9 +464,10 @@ export class DesignerComponent implements OnInit, OnDestroy {
   }
   private scheduleValidation() {
     clearTimeout(this.validateTimer);
+    const seq = ++this.validateSeq;
     this.validateTimer = setTimeout(async () => {
-      try { this.report.set(await this.api().request<FlowReport>('flows/validate', 'POST', { definition: this.flow() })); }
-      catch (e) { if (!(e instanceof SessionEnded)) this.report.set(null); }
+      try { const r = await this.api().request<FlowReport>('flows/validate', 'POST', { definition: this.flow() }); if (seq === this.validateSeq) this.report.set(r); }
+      catch (e) { if (!(e instanceof SessionEnded) && seq === this.validateSeq) this.report.set(null); }
     }, 500);
   }
   setTitle(title: string) { const c = this.current(); if (c && !this.readOnly()) { this.current.set({ ...c, title }); this.dirty.set(true); } }
@@ -529,7 +490,15 @@ export class DesignerComponent implements OnInit, OnDestroy {
       const node = createNode(draft, def); createdId = node.id;
       steps.splice(Math.min(index, steps.length), 0, node);
     });
-    if (createdId) { this.selectedId.set(createdId); this.notice.set(''); }
+    if (createdId) { this.selectedId.set(createdId); this.notice.set(''); this.focusInserted(createdId); }
+  }
+  /** Moves keyboard focus to a newly inserted action so its properties can be edited straight away. */
+  private focusInserted(id: string) {
+    setTimeout(() => {
+      const sel = CSS.escape(id);
+      const el = document.querySelector<HTMLElement>(`[data-node-id="${sel}"] .node-head, [data-node-id="${sel}"] .o-select`);
+      el?.focus({ preventScroll: true }); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
   }
   /** Moves a node (with everything inside it) to another position; a container cannot move into itself. */
   move(nodeId: string, lane: Lane, index: number) {
@@ -576,11 +545,53 @@ export class DesignerComponent implements OnInit, OnDestroy {
     if (pastedId) this.selectedId.set(pastedId);
   }
 
-  // ----------------------------------------------------------- inline + picker
-  openPicker(lane: Lane, index: number) {
+  // ----------------------------------------------------------- inline + picker (anchored overlay)
+  /**
+   * Opens the Add action popup anchored to the clicked +. It is a CDK overlay rendered outside the canvas, so it never
+   * moves or resizes the flow; it repositions near screen edges, while the canvas scrolls and when zooming. On small
+   * screens it becomes a bottom sheet. Only one popup is open at a time.
+   */
+  openPicker(lane: Lane, index: number, anchor: HTMLElement) {
     const k = this.key(lane, index);
-    this.pickerKey.set(this.pickerKey() === k ? '' : k);
-    setTimeout(() => (document.querySelector('.picker [role=tab][aria-selected=true]') as HTMLElement | null)?.focus());
+    const reopen = this.pickerKey() !== k;
+    this.closePicker(false);
+    if (!reopen || !this.pickerTpl) return;
+    this.pickerKey.set(k); this.pickerQuery.set(''); this.pickerTab.set('Suggestions'); this.pickerAnchor = anchor;
+    const sheet = window.matchMedia('(max-width: 640px)').matches;
+    const side = this.layout() === 'Vertical';
+    const right = { originX: 'end', originY: 'center', overlayX: 'start', overlayY: 'center', offsetX: 8 } as const;
+    const left = { originX: 'start', originY: 'center', overlayX: 'end', overlayY: 'center', offsetX: -8 } as const;
+    const below = { originX: 'center', originY: 'bottom', overlayX: 'center', overlayY: 'top', offsetY: 8 } as const;
+    const above = { originX: 'center', originY: 'top', overlayX: 'center', overlayY: 'bottom', offsetY: -8 } as const;
+    const position = sheet ? this.overlay.position().global().centerHorizontally().bottom('0')
+      : this.overlay.position().flexibleConnectedTo(anchor).withPositions(side ? [right, left, below, above] : [below, above, right, left])
+        .withPush(true).withViewportMargin(12).withFlexibleDimensions(false);
+    this.pickerRef = this.overlay.create({
+      positionStrategy: position, scrollStrategy: this.overlay.scrollStrategies.reposition(),
+      panelClass: sheet ? ['picker-pane', 'picker-sheet'] : 'picker-pane', hasBackdrop: sheet, backdropClass: 'cdk-overlay-dark-backdrop',
+      width: sheet ? '100%' : undefined,
+    });
+    this.pickerRef.attach(new TemplatePortal(this.pickerTpl, this.vcr, { lane, index }));
+    this.pickerRef.keydownEvents().subscribe(e => { if (e.key === 'Escape') { e.preventDefault(); this.closePicker(); } });
+    this.pickerRef.backdropClick().subscribe(() => this.closePicker());
+    this.pickerRef.outsidePointerEvents().subscribe(e => { if (!anchor.contains(e.target as Node)) this.closePicker(false); });
+    setTimeout(() => this.pickerRef?.overlayElement.querySelector<HTMLElement>('.picker-search')?.focus());
+  }
+  /** Closes the popup; returns focus to its + unless an action was chosen (focus then moves to the new action). */
+  closePicker(restoreFocus = true) {
+    if (!this.pickerRef) return;
+    this.pickerRef.dispose(); this.pickerRef = null; this.pickerKey.set('');
+    const anchor = this.pickerAnchor; this.pickerAnchor = null;
+    if (restoreFocus && anchor?.isConnected) anchor.focus();
+  }
+  /** Arrow keys move between the search box and the enabled actions in the list. */
+  pickerKeys(e: KeyboardEvent) {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const root = this.pickerRef?.overlayElement; if (!root) return;
+    const items = [root.querySelector<HTMLElement>('.picker-search')!, ...Array.from(root.querySelectorAll<HTMLElement>('.picker-list button:not([disabled])'))];
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    const next = items[Math.min(items.length - 1, Math.max(0, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+    e.preventDefault(); next?.focus();
   }
   slotLabel(lane: Lane, index: number) {
     const where = lane.kind === 'root' ? 'main flow' : lane.kind === 'fault' ? 'global fault handler'
@@ -588,30 +599,49 @@ export class DesignerComponent implements OnInit, OnDestroy {
     return `${where}, position ${index + 1}`;
   }
   private allBranches() { return allNodes(this.flow()).flatMap(n => n.branches ?? []); }
-  /** Actions offered at a slot, with the reason when one cannot go there. */
-  pickerItems(lane: Lane, index: number): PickerItem[] {
-    const tab = this.pickerTab();
-    if (tab === 'Connections / Invokes') {
-      const invokers = this.connections().filter(c => c.role === 'Invoke' || c.role === 'TriggerAndInvoke');
-      const generic = this.catalog()?.actions.find(a => a.type === 'invoke');
-      return [
-        ...invokers.map(c => ({ key: 'c:' + c.identifier, label: `Invoke ${c.name}`, description: `${c.applicationName} · ${c.identifier}`, icon: '⇄', reason: '', connection: c.identifier })),
-        ...(generic ? [{ key: 'invoke', label: 'Invoke (choose connection)', description: 'Opens the endpoint wizard.', icon: '⇄', reason: invokers.length ? '' : 'Create a connection with the Invoke role first (Connections workspace).', def: generic }] : []),
-      ];
-    }
+  private invokeItems(): PickerItem[] {
+    const invokers = this.connections().filter(c => c.role === 'Invoke' || c.role === 'TriggerAndInvoke');
+    const generic = this.catalog()?.actions.find(a => a.type === 'invoke');
+    return [
+      ...invokers.map(c => ({ key: 'c:' + c.identifier, label: `Invoke ${c.name}`, description: `${c.applicationName ?? c.application} · ${c.identifier}`, icon: '⇄', reason: '', connection: c.identifier })),
+      ...(generic ? [{ key: 'invoke', label: 'Invoke (choose connection)', description: 'Opens the endpoint wizard.', icon: '⇄', reason: invokers.length ? '' : 'Create a connection with the Invoke role first (Connections).', def: generic }] : []),
+    ];
+  }
+  private actionItems(lane: Lane, index: number): PickerItem[] {
     const ctx = laneContext(this.flow(), lane);
     const steps = stepsOf(this.flow(), lane) ?? [];
-    return (PICKER_TYPES[tab] ?? []).map(t => this.catalog()?.actions.find(a => a.type === t)).filter((a): a is ActionDef => !!a).map(a => {
+    let data: boolean | null = null;
+    const hasData = () => data ??= this.varsAt(lane, index).some(v => v.kind !== 'scalar' && !!v.table);
+    return Object.entries(PICKER_TYPES).flatMap(([group, types]) => types.map(t => this.catalog()?.actions.find(a => a.type === t)).filter((a): a is ActionDef => !!a).map((a, i) => {
       let reason = '';
       if (a.status === 'Planned') reason = `Planned (${a.planned}). Not available in this release.`;
       else if (a.type === 'rethrowFault' && !ctx.inFault) reason = 'Only inside a fault handler (Scope fault handler or the global fault handler).';
       else if (END_TYPES.includes(a.type) && index < steps.length) reason = 'End actions go at the end of a path; the actions after this position would become unreachable.';
-      return { key: a.type, label: a.label, description: a.description, icon: this.icon(a.type), reason, def: a };
-    });
+      else if (a.type === 'map' && !hasData()) reason = 'No record or collection is in scope here to map from. Add an Invoke (or a trigger with a request schema) before this point.';
+      return { key: a.type, label: a.label, description: a.description, icon: this.icon(a.type), reason, def: a, group: i === 0 ? group : undefined };
+    }));
+  }
+  /** Items offered at a slot, with the reason when one cannot go there. Search spans invokes and actions. */
+  pickerItems(lane: Lane, index: number): PickerItem[] {
+    const q = this.pickerQuery().trim().toLowerCase();
+    if (q) return [...this.invokeItems(), ...this.actionItems(lane, index)].map(i => ({ ...i, group: undefined }))
+      .filter(i => i.label.toLowerCase().includes(q) || i.description.toLowerCase().includes(q) || (i.def?.type ?? '').toLowerCase().includes(q));
+    switch (this.pickerTab()) {
+      case 'Invokes': return this.invokeItems();
+      case 'Actions': return this.actionItems(lane, index);
+      default: {
+        // Suggestions: what usually goes at this point and is usable here.
+        const ctx = laneContext(this.flow(), lane);
+        const atEnd = index >= (stepsOf(this.flow(), lane) ?? []).length;
+        const wanted = ctx.inFault ? ['logger', 'assign', 'throwFault', 'rethrowFault', 'faultReturn'] : ['map', 'assign', 'switch', 'forEach', 'logger', ...(atEnd ? ['return'] : [])];
+        const actions = this.actionItems(lane, index).filter(i => !i.reason && wanted.includes(i.def!.type)).map(i => ({ ...i, group: undefined }));
+        return [...(ctx.inFault ? [] : this.invokeItems().filter(i => !i.reason).slice(0, 3)), ...actions];
+      }
+    }
   }
   pick(item: PickerItem, lane: Lane, index: number) {
     if (item.reason) return;
-    this.pickerKey.set('');
+    this.closePicker(false);
     if (item.connection) this.openInvokeWizard(lane, index, { connection: item.connection });
     else if (item.def) this.insert(item.def, lane, index);
   }
@@ -671,7 +701,7 @@ export class DesignerComponent implements OnInit, OnDestroy {
       }
     });
     if (invokeId) {
-      this.selectedId.set(invokeId);
+      this.selectedId.set(invokeId); this.focusInserted(invokeId);
       this.notice.set(mapName ? `Invoke added with an unconfigured request mapping (${mapName}) before it. Open the mapping to map the fields.` : 'Invoke added. This operation sends no request body, so no mapping was added.');
     }
   }
@@ -854,7 +884,7 @@ export class DesignerComponent implements OnInit, OnDestroy {
 
   @HostListener('document:keydown', ['$event']) onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement;
-    if (!this.current() || target.closest('input, textarea, select, [contenteditable], .mapper-shell, app-modal')) return;
+    if (!this.current() || target.closest('input, textarea, select, [contenteditable], .mapper-shell, app-modal, .picker')) return;
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); this.undo(); }
     else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); this.redo(); }

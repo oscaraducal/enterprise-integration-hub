@@ -11,7 +11,7 @@ export class ApiError extends Error {
   /** ASP.NET validation problem → { field: [messages] }. */
   get fieldErrors(): Record<string, string[]> { return this.body?.errors ?? {}; }
 }
-export type View = 'Overview' | 'Source System' | 'Scenarios' | 'Integration Designer' | 'Connections' | 'Mapping Studio' | 'Target System' | 'Executions' | 'Workloads' | 'Guides';
+export type View = 'Overview' | 'Source System' | 'Scenarios' | 'Integrations' | 'Integration Designer' | 'Connections' | 'Mapping Studio' | 'Target System' | 'Executions' | 'Workloads' | 'Guides';
 export type RecordKind = 'customer' | 'order';
 /** Cross-page navigation request, e.g. "open customer C-300 in the Mapping Studio". */
 export interface Focus {
@@ -20,6 +20,10 @@ export interface Focus {
   section?: string;
   /** Pre-fill the middleware's run console with kind/id instead of opening the record. */
   run?: boolean;
+  /** Integration (flow name) to open in the Designer. */
+  flow?: string;
+  /** Open the page's create wizard (new integration or connection). */
+  create?: boolean;
 }
 export function errorText(e: unknown): string {
   if (e instanceof ApiError && Object.keys(e.fieldErrors).length)
