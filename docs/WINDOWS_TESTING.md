@@ -2,7 +2,7 @@
 
 A step-by-step guide to running and manually verifying Enterprise Integration Hub on Windows 11 with Docker Desktop. All systems and data are fictional; nothing here connects to Oracle Integration Cloud, Dell Boomi or ESP dSeries.
 
-> **Validation status:** this checklist has been reviewed against the code and the Linux GitHub Actions pipeline (which runs the same Docker Compose stack). It has **not** been executed end-to-end on a native Windows 11 machine with Docker Desktop. Tick the boxes as you go and record anything that differs.
+> **Validation status (17 Nov 2026):** on Windows 11 Pro 26H2 with Docker Desktop 4.99 (WSL 2 backend), the stack was built and started with `docker compose up --build -d`. These checklist scenarios were verified through the dashboard's `/api` proxy: health, operator/viewer permissions, success, 503 retry, permanent failure, safe manual retry, duplicate prevention, CRM outage and recovery, and persistence across `docker compose restart` (22 checks, all passed). The browser-based steps (visual layout, keyboard, themes) were **not** executed on Windows by an automated run; tick them as you go and record anything that differs.
 
 Commands are for **PowerShell** (Windows Terminal → PowerShell). Run them from the repository folder unless a step says otherwise.
 
@@ -127,7 +127,7 @@ docker compose stop crm
 
 - [ ] Within a few seconds a yellow **Some data could not be refreshed** notice names *Mock CRM source orders* and the time of the last good update. It is not a blocking error.
 - [ ] Metrics, execution history, search, filters and **Inspect** still work. The Run form keeps the previously loaded order list and warns that it may be out of date.
-- [ ] Run **ORD-008** with scenario **None**. It goes through `RetryScheduled` (`Connection` or `UpstreamUnavailable`) and finally `RetryExhausted`, because the CRM is down. You can investigate it while the outage continues.
+- [ ] Run **ORD-008** with scenario **None**. It goes through `RetryScheduled` twice and finally `RetryExhausted` (3 attempts), because the CRM is down. Under Docker the class is usually `Timeout`: resolving the stopped `crm` container takes longer than the hub's 2-second timeout. A native run with the CRM process stopped reports `Connection` instead. Both are transient and retried automatically. You can investigate it while the outage continues.
 - [ ] Restart the CRM: `docker compose start crm`. The notice disappears on the next refresh. Retry **ORD-008**; it completes.
 
 ## 13. Persistent execution history

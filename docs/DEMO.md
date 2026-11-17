@@ -22,7 +22,7 @@ Submit the same source order again and show the 409 behavior. Explain that ERP a
 
 ## 5. Show resilience during an upstream outage (optional, Docker)
 
-Run `docker compose stop crm`. Point out the yellow partial-outage notice: history, metrics and investigation keep working, which is exactly what an operator needs during an incident. Run a new order: it shows `RetryScheduled` and then `RetryExhausted` with a Connection classification. Run `docker compose start crm`, then retry it safely.
+Run `docker compose stop crm`. Point out the yellow partial-outage notice: history, metrics and investigation keep working, which is exactly what an operator needs during an incident. Run a new order: it shows `RetryScheduled` and then `RetryExhausted`, classified `Timeout` under Docker (the stopped container cannot be resolved within the 2-second client timeout). Run `docker compose start crm`, then retry it safely.
 
 To show crash recovery, start a Timeout execution with three failing attempts. Run `docker compose kill hub` and then `docker compose start hub`, and open the timeline. `RecoveryScheduled` or `RecoveryExhausted` shows that the 3-attempt budget held across the restart.
 
