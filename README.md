@@ -62,9 +62,38 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md) (lifecycle state machine, audit trai
 
 ## Screenshots
 
-The CI browser tests capture screenshots of the real running stack in every run: the desktop dashboard after a completed integration, mobile/tablet/desktop layouts, the partial CRM outage notice, and the dark-theme investigation view on mobile. Download them from the **verification-reports** artifact of the latest [GitHub Actions run](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml) (`frontend/test-results/*.png`).
+These are real screenshots, captured by the Playwright browser tests in [CI run 44046733351](https://github.com/oscaraducal/enterprise-integration-hub/actions/runs/44046733351) against the actual Mock CRM, Middleware and Mock ERP services. All data is synthetic.
 
-<!-- Screenshots will be embedded here once copied from a CI artifact into docs/screenshots/. -->
+**Integration monitoring dashboard** shows live metrics, status distribution, the CRM → Middleware → ERP route, and the operator-only run form.
+
+![Operations overview dashboard with execution metrics, health bar, order synchronization route and run form](docs/screenshots/dashboard.png)
+
+**Execution details and timeline:** ORD-002 hit a simulated ERP 503, was retried automatically (`RetryScheduled`, attempt 2 of 3), and completed. It shows the attributed audit trail, ERP receipt and frozen mapped payload (USD 251.00 → 25100 minor units).
+
+![Execution investigation for ORD-002 showing Queued, Started, Retrieved, Mapped, RetryScheduled and Completed stages with receipt and mapped payload](docs/screenshots/execution-timeline.png)
+
+**Failed integration investigation:** ORD-003 was rejected by the ERP with HTTP 400. It's classified `InvalidRequest` (permanent, not retried automatically), with troubleshooting guidance and the operator's **Safely retry execution** action.
+
+![Failed execution ORD-003 with InvalidRequest classification, guidance, timeline ending in Failed, and the safe retry button](docs/screenshots/failed-investigation.png)
+
+<table>
+<tr>
+<td width="62%" valign="top">
+
+**Partial CRM outage:** the Mock CRM is unavailable, but metrics and execution history keep updating behind a non-blocking notice that shows when the source orders were last loaded.
+
+<img src="docs/screenshots/crm-outage.png" alt="Dashboard showing a yellow partial-outage notice for Mock CRM source orders while metrics remain visible">
+</td>
+<td width="38%" valign="top">
+
+**Mobile layout (390 px)**
+
+<img src="docs/screenshots/mobile.png" alt="Mobile layout of the operations overview with stacked metrics, run form and execution table" width="260">
+</td>
+</tr>
+</table>
+
+More captures (tablet, dark theme, mobile investigation) are in the `verification-reports` artifact of each [CI run](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml).
 
 ## Quick start (Docker)
 
@@ -131,6 +160,8 @@ The full script is in [docs/DEMO.md](docs/DEMO.md).
 | Angular production build | Type-checked templates, SCSS, bundle budget | `npm run build` · CI |
 | Browser (Playwright, Chromium) | Real CRM/ERP/middleware end to end, plus injected partial outages, stale-response races, filters and pagination, sign-out and expiry, keyboard tables, mobile/tablet/desktop layouts | `npm test` · CI |
 | Docker smoke test | Compose stack, nginx proxy, JWT login, CRM mapping, ERP retry and receipt | CI |
+
+**Latest verified run** ([44046733351](https://github.com/oscaraducal/enterprise-integration-hub/actions/runs/44046733351), 17 Nov 2026): Release build passed, 53/53 backend tests passed, Angular production build passed, 18/18 Chromium tests passed, Docker Compose smoke test passed.
 
 Results come from GitHub Actions, not from this README. See the [latest CI runs](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml) and the PR [oscaraducal/enterprise-integration-hub#1](https://github.com/oscaraducal/enterprise-integration-hub/pull/1) for the recorded outcomes. Test catalogue and local instructions: [TEST_CASES.md](TEST_CASES.md).
 
