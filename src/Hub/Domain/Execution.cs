@@ -4,10 +4,24 @@ public static class Statuses
 {
     public static readonly string[] All = ["Pending", "Running", "Completed", "Failed", "Retrying"];
 }
+public static class Kinds
+{
+    public const string SalesOrder = "SalesOrder";       // SCN-002
+    public const string CustomerSync = "CustomerSync";   // SCN-001 / SCN-003
+    public static readonly string[] All = [SalesOrder, CustomerSync];
+}
 public class Execution
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    /// <summary>Idempotency key. Sales orders: the source order ID (one execution per order, ever).
+    /// Customer syncs: unique per execution; concurrency is limited by an active-sync index instead.</summary>
     public string OrderId { get; set; } = "";
+    public string Kind { get; set; } = Kinds.SalesOrder;
+    /// <summary>Source record ID shown to users (order or customer ID).</summary>
+    public string? SourceId { get; set; }
+    public int? SourceVersion { get; set; }
+    /// <summary>Snapshot of the source record captured at the first successful retrieval (customer syncs and new orders).</summary>
+    public string? SourcePayload { get; set; }
     public string Status { get; set; } = "Pending";
     public string Environment { get; set; } = "DEV";
     public string Scenario { get; set; } = "None";

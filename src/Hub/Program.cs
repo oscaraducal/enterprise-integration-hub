@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
+using Hub.Api;
 using Hub.Application;
 using Hub.Domain;
 using Hub.Infrastructure;
@@ -69,7 +70,7 @@ public partial class Program
         using (var scope = app.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<HubDb>();
-            await db.Database.EnsureCreatedAsync();
+            await HubDb.InitializeAsync(db);
             if (!await db.Jobs.AnyAsync())
             {
                 db.Jobs.AddRange(Enumerable.Range(1, 8).Select(i => new JobRun
@@ -121,18 +122,21 @@ public partial class Program
             return Results.Ok(new { total, completed, failed, successRate = total == 0 ? 0 : Math.Round(100.0 * completed / total, 1),
                 averageDurationMs = durations.Count == 0 ? 0 : durations.Average(), statuses });
         });
-        api.MapGet("/executions", async (string? search, string? status, string? environment, int? page, HubDb db) =>
+        api.MapGet("/executions", async (string? search, string? status, string? environment, string? kind, int? page, HubDb db) =>
         {
             if (search?.Length > 64 || (status is not null && !Statuses.All.Contains(status)) ||
-                (environment is not null && environment is not ("DEV" or "TEST"))) return Results.BadRequest();
+                (environment is not null && environment is not ("DEV" or "TEST")) ||
+                (kind is not null && !Kinds.All.Contains(kind))) return Results.BadRequest();
             var query = db.Executions.AsNoTracking().AsQueryable();
-            if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.Id.Contains(search));
+            // Search matches the execution ID or the source record ID (e.g. ORD-013, C-300).
+            if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.Id.Contains(search) || (x.SourceId != null && x.SourceId.Contains(search)));
+            if (kind is not null) query = query.Where(x => x.Kind == kind);
             if (status is not null) query = query.Where(x => x.Status == status);
             if (environment is not null) query = query.Where(x => x.Environment == environment);
             var count = await query.CountAsync();
             var currentPage = Math.Clamp(page ?? 1, 1, 100000);
             var items = await query.OrderByDescending(x => x.CreatedAt).Skip((currentPage - 1) * 20).Take(20)
-                .Select(x => new { x.Id, x.OrderId, x.Status, x.Environment, x.CreatedAt, x.DurationMs, x.Attempts, x.ErrorClass }).ToListAsync();
+                .Select(x => new { x.Id, x.OrderId, x.Kind, x.SourceId, x.SourceVersion, x.Status, x.Environment, x.CreatedAt, x.DurationMs, x.Attempts, x.ErrorClass }).ToListAsync();
             return Results.Ok(new { items, total = count, page = currentPage, pageSize = 20 });
         });
         api.MapGet("/executions/{id}", async (string id, HubDb db) =>
@@ -142,16 +146,26 @@ public partial class Program
         });
         api.MapPost("/executions", async (StartExecution input, ClaimsPrincipal user, HubDb db) =>
         {
-            if (string.IsNullOrWhiteSpace(input.OrderId) || input.OrderId.Length > 60 ||
+            var kind = input.Kind ?? Kinds.SalesOrder;
+            var sourceId = (kind == Kinds.SalesOrder ? input.OrderId ?? input.SourceId : input.SourceId)?.Trim();
+            if (!Kinds.All.Contains(kind) || string.IsNullOrWhiteSpace(sourceId) || sourceId.Length > 60 ||
+                !sourceId.All(c => char.IsLetterOrDigit(c) || c is '-' or '_') ||
                 input.Environment is not ("DEV" or "TEST") || !Scenarios.All.Contains(input.Scenario) ||
                 input.Target is not ("CRM" or "ERP") || input.FailuresBeforeSuccess is < 0 or > 3 ||
                 (input.Scenario == "Validation" && input.Target != "CRM") ||
-                (input.Scenario == "Duplicate" && input.Target != "ERP")) return Results.BadRequest();
-            var existing = await db.Executions.AsNoTracking().SingleOrDefaultAsync(x => x.OrderId == input.OrderId);
-            if (existing is not null) return Results.Conflict(new { executionId = existing.Id, error = "Source order already tracked. Open its execution." });
-            var execution = new Execution { OrderId = input.OrderId, Environment = input.Environment,
-                Scenario = input.Scenario, Target = input.Target, FailuresBeforeSuccess = input.FailuresBeforeSuccess };
-            execution.Logs.Add(new ExecutionLog { Stage = "Queued", Message = $"Queued by {Actor(user)} in {input.Environment}. " +
+                (input.Scenario == "Duplicate" && (input.Target != "ERP" || kind != Kinds.SalesOrder))) return Results.BadRequest();
+            if (kind == Kinds.SalesOrder)
+            {
+                var existing = await db.Executions.AsNoTracking().SingleOrDefaultAsync(x => x.OrderId == sourceId);
+                if (existing is not null) return Results.Conflict(new { executionId = existing.Id, error = "Source order already tracked. Open its execution." });
+            }
+            // Orders are immutable: one execution per order, ever. Customers are mutable: every sync is a new
+            // execution, but only one may be active per customer (enforced by a partial unique index).
+            var execution = new Execution { Kind = kind, SourceId = sourceId,
+                OrderId = kind == Kinds.SalesOrder ? sourceId : $"CUSTOMER:{sourceId}:{Guid.NewGuid():N}",
+                Environment = input.Environment, Scenario = input.Scenario, Target = input.Target, FailuresBeforeSuccess = input.FailuresBeforeSuccess };
+            execution.Logs.Add(new ExecutionLog { Stage = "Queued", Message =
+                (kind == Kinds.CustomerSync ? $"Customer sync for {sourceId} queued" : "Queued") + $" by {Actor(user)} in {input.Environment}. " +
                 (input.Scenario == "None" ? "No failure simulation." : $"Simulation {input.Scenario} on {execution.Target} for the first {input.FailuresBeforeSuccess} attempt(s).") +
                 $" Automatic retry budget: {IntegrationRunner.MaxAttempts} attempts." });
             db.Executions.Add(execution);
@@ -159,9 +173,15 @@ public partial class Program
             catch (DbUpdateException)
             {
                 db.ChangeTracker.Clear();
-                existing = await db.Executions.AsNoTracking().SingleOrDefaultAsync(x => x.OrderId == input.OrderId);
-                if (existing is null) throw;
-                return Results.Conflict(new { executionId = existing.Id, error = "Source order already tracked." });
+                if (kind == Kinds.CustomerSync)
+                {
+                    var active = await ActiveSync(db, sourceId);
+                    if (active is null) throw;
+                    return Results.Conflict(new { executionId = active, error = $"A sync for {sourceId} is already queued or running. Open it." });
+                }
+                var winner = await db.Executions.AsNoTracking().SingleOrDefaultAsync(x => x.OrderId == sourceId);
+                if (winner is null) throw;
+                return Results.Conflict(new { executionId = winner.Id, error = "Source order already tracked." });
             }
             return Results.Accepted($"/api/executions/{execution.Id}", new { execution.Id });
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
@@ -171,7 +191,10 @@ public partial class Program
             await using var tx = await db.Database.BeginTransactionAsync();
             var before = await db.Executions.AsNoTracking().Where(x => x.Id == id)
                 .Select(x => new { x.ErrorClass, x.Attempts, x.RetryCount }).SingleOrDefaultAsync();
-            var changed = await db.Executions.Where(x => x.Id == id && x.Status == "Failed")
+            int changed;
+            try
+            {
+                changed = await db.Executions.Where(x => x.Id == id && x.Status == "Failed")
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, "Pending")
                     .SetProperty(x => x.Scenario, "None").SetProperty(x => x.Attempts, 0)
                     .SetProperty(x => x.RetryCount, x => x.RetryCount + 1)
@@ -179,12 +202,18 @@ public partial class Program
                     .SetProperty(x => x.StartedAt, (DateTime?)null)
                     .SetProperty(x => x.ErrorClass, (string?)null).SetProperty(x => x.Troubleshooting, (string?)null)
                     .SetProperty(x => x.AvailableAt, DateTime.UtcNow));
+            }
+            catch (Exception ex) when (ex is DbUpdateException or Microsoft.Data.Sqlite.SqliteException)
+            {
+                // Another sync for the same customer is already active (partial unique index).
+                return Results.Conflict(new { error = "Another sync for this customer is already queued or running. Wait for it, then retry." });
+            }
             if (changed == 0) return await db.Executions.AnyAsync(x => x.Id == id)
                 ? Results.Conflict(new { error = "Only failed executions can be retried." }) : Results.NotFound();
             db.Logs.Add(new ExecutionLog { ExecutionId = id, Stage = "ManualRetry",
                 Message = $"Manual retry #{before!.RetryCount + 1} requested by {Actor(user)} after {before.ErrorClass ?? "failure"} " +
                     $"on attempt {before.Attempts}. New cycle with a {IntegrationRunner.MaxAttempts}-attempt budget; simulation cleared; " +
-                    "original order ID and frozen mapped payload retained." });
+                    "original source ID and frozen mapped payload retained." });
             await db.SaveChangesAsync();
             await tx.CommitAsync();
             return Results.Accepted($"/api/executions/{id}", new { id });
@@ -212,13 +241,18 @@ public partial class Program
             await db.SaveChangesAsync();
             return Results.Created($"/api/jobs/{job.Id}", job);
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
+        api.MapPortfolioLab();
         await app.RunAsync();
     }
+    private static async Task<string?> ActiveSync(HubDb db, string sourceId) =>
+        await db.Executions.AsNoTracking().Where(x => x.Kind == Kinds.CustomerSync && x.SourceId == sourceId &&
+            (x.Status == "Pending" || x.Status == "Running" || x.Status == "Retrying")).Select(x => x.Id).FirstOrDefaultAsync();
     // Audit attribution uses only the fixed demo account name and role, never token contents.
     private static string Actor(ClaimsPrincipal user) =>
         $"{user.Identity?.Name ?? "unknown"} ({(user.IsInRole("Operator") ? "Operator" : "Viewer")})";
 }
 public record Login(string Username, string Password);
-public record StartExecution(string OrderId, string Environment = "DEV", string Scenario = "None",
-    string Target = "ERP", int FailuresBeforeSuccess = 1);
+/// <summary>Queue request. Sales orders may send orderId (v1 contract) or sourceId; customer syncs send kind + sourceId.</summary>
+public record StartExecution(string? OrderId = null, string Environment = "DEV", string Scenario = "None",
+    string Target = "ERP", int FailuresBeforeSuccess = 1, string? Kind = null, string? SourceId = null);
 public record SimulateJob(string Environment, bool Fail);
