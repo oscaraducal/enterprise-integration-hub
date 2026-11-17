@@ -28,7 +28,7 @@
       <div class="workspace-label">DEMO WORKSPACE</div>
       <nav aria-label="Main navigation">
         @for(item of ['Overview','Executions','Workloads']; track item){
-          <button [class.active]="view() === item" (click)="view.set(item)"><span>{{item === 'Overview' ? '◫' : item === 'Executions' ? '⇄' : '▤'}}</span>{{item}}</button>
+          <button [attr.aria-label]="item" [class.active]="view() === item" (click)="view.set(item)"><span>{{item === 'Overview' ? '◫' : item === 'Executions' ? '⇄' : '▤'}}</span>{{item}}</button>
         }
       </nav>
       <div class="sidebar-bottom"><span class="live-dot"></span> Local simulator<p>CRM → Middleware → ERP</p><small>Fictional systems. Real engineering.</small></div>

@@ -65,5 +65,7 @@ public class AcceptedOrder
 public class ErpDb(DbContextOptions<ErpDb> options) : DbContext(options)
 {
     public DbSet<AcceptedOrder> Accepted => Set<AcceptedOrder>();
+    protected override void ConfigureConventions(ModelConfigurationBuilder configuration)
+        => configuration.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
     protected override void OnModelCreating(ModelBuilder model) => model.Entity<AcceptedOrder>().HasKey(x => x.ExternalOrderId);
 }

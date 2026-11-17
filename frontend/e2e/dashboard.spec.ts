@@ -15,6 +15,7 @@ test('order travels through real mock APIs and shows a receipt and timeline', as
   await expect(panel.locator('.pill')).toHaveText('Completed', { timeout: 20000 });
   await expect(panel.getByText('Mock ERP accepted the order.')).toBeVisible();
   await expect(panel.locator('pre')).toContainText('12550');
+  await page.screenshot({ path: 'test-results/dashboard-desktop.png', fullPage: true });
   const id = await panel.locator('.execution-id').innerText();
   await page.getByLabel('Search execution ID').fill(id);
   await page.getByRole('button', { name: 'Search', exact: true }).click();
@@ -50,6 +51,7 @@ test('viewer, theme and mobile layout', async ({ page }) => {
   await page.getByRole('button', { name: 'Workloads', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Simulated workload monitoring' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Simulate failure' })).toHaveCount(0);
+  await page.screenshot({ path: 'test-results/dashboard-mobile-dark.png', fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 test('failed workload exposes investigation details', async ({ page }) => {

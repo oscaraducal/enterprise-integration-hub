@@ -7,6 +7,8 @@ public class HubDb(DbContextOptions<HubDb> options) : DbContext(options)
     public DbSet<Execution> Executions => Set<Execution>();
     public DbSet<ExecutionLog> Logs => Set<ExecutionLog>();
     public DbSet<JobRun> Jobs => Set<JobRun>();
+    protected override void ConfigureConventions(ModelConfigurationBuilder configuration)
+        => configuration.Properties<DateTime>().HaveConversion<Integration.Shared.UtcDateTimeConverter>();
     protected override void OnModelCreating(ModelBuilder model)
     {
         // One durable execution per source order, also across concurrent submissions.

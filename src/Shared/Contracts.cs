@@ -35,3 +35,6 @@ public static class Scenarios
         "RateLimit" => 429, "ServerError" => 500, "Unavailable" => 503, _ => null
     };
 }
+
+public sealed class UtcDateTimeConverter() : Microsoft.EntityFrameworkCore.Storage.ValueConversion.ValueConverter<DateTime, DateTime>(
+    value => value.ToUniversalTime(), value => DateTime.SpecifyKind(value, DateTimeKind.Utc));

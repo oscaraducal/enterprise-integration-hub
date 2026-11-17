@@ -97,6 +97,7 @@ public class ApiTests
         Assert.Equal(1, page.GetProperty("total").GetInt32());
         var detail = await client.GetFromJsonAsync<JsonElement>("/api/executions/" + id);
         Assert.Equal("Queued", detail.GetProperty("logs")[0].GetProperty("stage").GetString());
+        Assert.EndsWith("Z", detail.GetProperty("createdAt").GetString());
         Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/executions/" + id + "/retry", new { })).StatusCode);
         var metrics = await client.GetFromJsonAsync<JsonElement>("/api/metrics");
         Assert.Equal(1, metrics.GetProperty("total").GetInt32());
@@ -135,6 +136,18 @@ public class ApiTests
             new { orderId = "ORD-001", environment, scenario, target })).StatusCode);
     }
     [Fact]
+    public async Task Concurrent_submissions_create_exactly_one_execution()
+    {
+        using var factory = new DemoFactory<Hub.Program>();
+        using var client = await Login(factory);
+        var responses = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ =>
+            client.PostAsJsonAsync("/api/executions", new { orderId = "ORD-001" })));
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Accepted);
+        Assert.Equal(5, responses.Count(r => r.StatusCode == HttpStatusCode.Conflict));
+        using var scope = factory.Services.CreateScope();
+        Assert.Equal(1, await scope.ServiceProvider.GetRequiredService<HubDb>().Executions.CountAsync());
+    }
+    [Fact]
     public async Task Workloads_are_synthetic_and_filterable()
     {
         using var factory = new DemoFactory<Hub.Program>();
@@ -167,6 +180,19 @@ public class MockApiTests
             (await client.PostAsJsonAsync("/api/orders", order with { TotalMinorUnits = 999 })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest,
             (await client.PostAsJsonAsync("/api/orders", order with { ExternalOrderId = "O-2", TotalMinorUnits = -1 })).StatusCode);
+    }
+    [Fact]
+    public async Task Concurrent_ERP_requests_return_one_durable_receipt()
+    {
+        using var factory = new DemoFactory<MockErp.Program>();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Service-Key", DemoFactory<MockErp.Program>.ServiceKey);
+        var responses = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ =>
+            client.PostAsJsonAsync("/api/orders", new ErpOrder("O-race", "C-100", "USD", 5000))));
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Created);
+        Assert.All(responses, r => Assert.True(r.IsSuccessStatusCode));
+        var receipts = await Task.WhenAll(responses.Select(r => r.Content.ReadFromJsonAsync<Receipt>()));
+        Assert.Single(receipts.Select(r => r!.ReceiptId).Distinct());
     }
     [Fact]
     public async Task CRM_exposes_seeded_orders_validates_and_simulates_errors()
