@@ -1,0 +1,64 @@
+# Set these variables in your API client's private environment.
+@hub = http://localhost:5100
+@crm = http://localhost:5101
+@erp = http://localhost:5102
+@password = REPLACE_LOCALLY
+@serviceKey = REPLACE_LOCALLY
+@token = REPLACE_WITH_LOGIN_TOKEN
+@executionId = REPLACE_WITH_EXECUTION_ID
+
+### Authenticate
+POST {{hub}}/api/auth/login
+Content-Type: application/json
+
+{"username":"operator","password":"{{password}}"}
+
+### Queue normal integration
+POST {{hub}}/api/executions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"orderId":"ORD-001","environment":"DEV","scenario":"None","target":"ERP","failuresBeforeSuccess":0}
+
+### Queue transient failure
+POST {{hub}}/api/executions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"orderId":"ORD-002","environment":"TEST","scenario":"Unavailable","target":"ERP","failuresBeforeSuccess":1}
+
+### Inspect timeline
+GET {{hub}}/api/executions/{{executionId}}
+Authorization: Bearer {{token}}
+
+### Retry a failed execution
+POST {{hub}}/api/executions/{{executionId}}/retry
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### Add a fictional customer
+POST {{crm}}/api/customers
+X-Service-Key: {{serviceKey}}
+Content-Type: application/json
+
+{"id":"C-300","name":"Fictional Cedar Research"}
+
+### Add a fresh source order
+POST {{crm}}/api/orders
+X-Service-Key: {{serviceKey}}
+Content-Type: application/json
+
+{"id":"ORD-013","customerId":"C-300","currency":"PHP","amount":250.75}
+
+### Inspect ERP receipts
+GET {{erp}}/api/orders
+X-Service-Key: {{serviceKey}}
+
+### Simulate workload failure
+POST {{hub}}/api/jobs/simulate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"environment":"TEST","fail":true}
