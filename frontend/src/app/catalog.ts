@@ -2,12 +2,13 @@ import { Focus } from './api';
 
 export interface GuideStep { text: string; detail?: string; go?: Focus; label?: string }
 export interface ScenarioDef {
-  id: string; title: string; status: 'Implemented' | 'Planned';
+  id: string; title: string; status: 'Implemented' | 'Design only' | 'Planned';
   source: string; target: string; businessCase: string; objective: string;
   requirements: string[]; fields: [string, string][]; samples: string[];
   verify: string[]; steps: GuideStep[]; doc: string;
 }
 const DOCS = 'https://github.com/oscaraducal/enterprise-integration-hub/blob/feature/integration-portfolio-lab/docs/scenarios/';
+const DESIGNER_DOC = 'https://github.com/oscaraducal/enterprise-integration-hub/blob/feature/visual-integration-workbench/docs/designer/README.md';
 
 export const SCENARIOS: ScenarioDef[] = [
   {
@@ -92,6 +93,69 @@ export const SCENARIOS: ScenarioDef[] = [
     requirements: ['Header and line mapping', 'Items (SCN-004) must exist first', 'Confirmation back to the source'],
     fields: [['poNumber', 'purchaseOrderRef'], ['supplierId', 'vendorCode'], ['warehouse', 'siteCode'], ['lines[].sku', 'lines[].itemCode'], ['lines[].qty', 'lines[].expectedQty']],
     samples: ['Design only: no running endpoints'], verify: ['Planned'], steps: [], doc: DOCS + 'SCN-005-purchase-order.md'
+  },
+  {
+    id: 'DSN-001', title: 'Design the customer master flow', status: 'Design only',
+    source: 'Legacy CRM · customers', target: 'Modern ERP · customer_master',
+    businessCase: 'Rebuild SCN-001 visually: an integration developer composes the flow from actions instead of relying on built-in code.',
+    objective: 'Create the flow from a template, inspect each action, re-map a field by drag-and-drop, validate, save a draft and publish version 1.',
+    requirements: ['Invoke reads one CRM customer by $trigger.customerId.', 'A Switch raises MissingEmail when the email is empty.',
+      'Map applies the SCN-001 rules; Invoke upserts erp.customer_master.', 'The global fault handler logs and returns CustomerSyncFailed.'],
+    fields: [['customerId', 'accountCode'], ['customerName', 'displayName'], ['email', 'emailAddress'], ['phone', 'contactNumber'], ['status', 'accountStatus']],
+    samples: ['Trigger sample: customerId = C-300', 'Template: "Legacy CRM customer → Modern ERP customer"'],
+    verify: ['The toolbar shows Valid; Problems lists only warnings (the ERP write that happens once runs exist, and the optional CRM email feeding a required ERP field).',
+      'Versions shows v1; editing the draft afterwards never changes v1.', 'Executions shows no new run: designing never calls the ERP.'],
+    doc: DESIGNER_DOC,
+    steps: [
+      { text: 'Open the Integration Designer and click + New flow (Operator).', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'Name it customer-sync and start from "Legacy CRM customer → Modern ERP customer". Create it.', detail: 'Templates are created only on request; nothing is seeded.' },
+      { text: 'Select readCustomer. It is an Invoke: crm.customers, operation get, key $trigger.customerId. Only list and get exist for the CRM.' },
+      { text: 'Select checkEmail. Its case "Email missing" holds a Throw New Fault; Otherwise continues.' },
+      { text: 'Select mapCustomer and click Open field mapper. Remove contactNumber, then drag phone onto contactNumber. Click Preview to see real CRM values transformed, then Apply.' },
+      { text: 'Watch the Problems tab: it updates as you edit. Click a problem to jump to its action.' },
+      { text: 'Save draft, then Publish. The Versions tab shows v1 with its author and time.' },
+      { text: 'Export the version: you get an eih-flow JSON document you can import as a new flow.' },
+    ]
+  },
+  {
+    id: 'DSN-002', title: 'Stage a CRM order as an XML file', status: 'Design only',
+    source: 'Legacy CRM · sales_orders', target: 'Stage area · order-export.xml',
+    businessCase: 'Some partners receive files instead of API calls. The flow maps an order and stages it as XML, separate from ERP delivery.',
+    objective: 'Configure a Stage File write with an XML root and record element, and see the sandbox rules for file names.',
+    requirements: ['File names are 1-60 safe characters with .xml, .json or .csv; paths are refused.', 'XML needs root and record element names.',
+      'Read entire file and List files are designable; segments, zip and encryption are planned.'],
+    fields: [['id', 'externalOrderId'], ['customerId', 'accountCode'], ['currency', 'currencyCode'], ['amount', 'totalMinorUnits']],
+    samples: ['Trigger sample: orderId = ORD-013', 'Template: "Legacy CRM order → staged XML file"'],
+    verify: ['Changing the file name to ../secret.xml shows "Paths are not allowed".', 'Undo restores it and the flow is valid again.'],
+    doc: DESIGNER_DOC,
+    steps: [
+      { text: 'Create a flow from "Legacy CRM order → staged XML file".', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'Select writeOrderXml: operation Write file, format xml, root SalesOrders, record SalesOrder, data $mapOrder.' },
+      { text: 'Change the file name to ../secret.xml and read the problem; press Undo (Ctrl+Z).' },
+      { text: 'Open the Stage File operation list: planned operations are visible but disabled.' },
+      { text: 'Open mapOrder in the field mapper and Preview: 410.25 becomes 41025 minor units.' },
+      { text: 'Save and publish. Generating the XML file happens when flows run (Milestone D).' },
+    ]
+  },
+  {
+    id: 'DSN-003', title: 'Loops, branches, scopes and faults', status: 'Design only',
+    source: 'Legacy CRM · sales_orders (list)', target: 'Execution log',
+    businessCase: 'Review a batch of orders: iterate, branch on currency, summarize, and handle faults locally with a Scope.',
+    objective: 'Practise nested containers, scoped variables, collection functions, the expression builder and fault-handler rules.',
+    requirements: ['For Each iterates a collection with a 1-500 item limit; $order exists only inside the loop.',
+      'Switch cases are checked top to bottom; Otherwise is last.', 'Re-throw Fault is only valid inside a fault handler.'],
+    fields: [['listOrders (collection)', 'order (loop item)'], ['count($listOrders)', 'orderCount'], ["sum($listOrders, 'amount')", 'orderTotal']],
+    samples: ['Template: "Review CRM orders (loop and branch)"'],
+    verify: ['Referencing $order after the loop shows "unknown variable $order".', 'Re-throw Fault outside a handler is an error; inside a Scope fault handler it is valid.'],
+    doc: DESIGNER_DOC,
+    steps: [
+      { text: 'Create a flow from "Review CRM orders (loop and branch)".', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'Collapse eachOrder to see "3 inside", expand it again, and search for logUnsupported.' },
+      { text: 'Select logSummary and set its message to $order.id: the Problems tab reports the out-of-scope variable. Undo.' },
+      { text: 'Drag a Scope into the main flow, then drag a Throw New Fault into its body and a Re-throw Fault into its fault handler.' },
+      { text: 'Drag another Re-throw Fault into the main flow: it is reported as invalid outside a handler. Delete it.' },
+      { text: 'Open the expression builder (ƒx) on a Logger, insert $order.currency and a function, then Check syntax.' },
+    ]
   }
 ];
 
@@ -105,6 +169,9 @@ export const GLOSSARY: [string, string][] = [
   ['Upsert', 'Create the record if it is missing, otherwise update it. Used for mutable customer data (SCN-001/003).'],
   ['Reconciliation', 'Comparing source and target records to prove they match. See Compare with source in the Modern ERP page.'],
   ['Fixture', 'A synthetic record placed in the target for demonstration (here: migrated at go-live). Only fixtures may be edited by hand.'],
+  ['Orchestration flow', 'An ordered set of actions (invoke, assign, map, branch, loop…) designed in the Integration Designer.'],
+  ['Draft and published version', 'The draft is editable; publishing a valid draft stores an immutable numbered version.'],
+  ['Expression', 'A safe formula such as concat($a, \'-\', upper($b)). It is parsed and checked, never executed as code.'],
 ];
 
 /** The integration pipeline shown across the lab. */

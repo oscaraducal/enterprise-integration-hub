@@ -190,3 +190,23 @@ Every route below is behind the Integration Hub's JWT authentication. `{system}`
 | POST | /api/mapping-definitions | Operator | Re-validates on the server, then stores a new immutable version (400 with the report when invalid). Saved definitions are configuration only and are **not executed** in Milestone B |
 
 Allowlisted transformations: Copy, Trim, Uppercase, Lowercase, Concatenate, Default, ToNumber, Multiply, Divide, FormatDate (fixed format list), Lookup. Nothing is evaluated as code or SQL.
+
+## Integration Designer (Milestone C)
+
+Designs are configuration: no route below executes a flow or calls a target system. Validation reads catalog metadata only.
+
+| Method | Hub route | Role | Notes |
+|---|---|---|---|
+| GET | /api/flows/actions | Viewer/Operator | Action catalog with status (Designable or Planned), expression functions, date formats, templates and limits |
+| POST | /api/flows/expressions/check | Viewer/Operator | `{ expression }` → `{ valid, errors[{position,message}], variables }`. Parsed, never evaluated |
+| POST | /api/flows/validate | Viewer/Operator | `{ definition }` → `{ valid, issues[{nodeId,severity,message,field}], nodeCount, variables }` |
+| GET | /api/flows | Viewer/Operator | Flows with draft revision and latest published version |
+| GET | /api/flows/{name} | Viewer/Operator | Draft definition, revision, versions and a fresh validation report |
+| GET | /api/flows/{name}/versions/{version} | Viewer/Operator | An immutable published version |
+| POST | /api/flows | Operator | `{ name, title, description?, template? }` (`blank`, `customer-sync`, `order-xml`, `order-review`). Names: `^[a-z][a-z0-9-]{2,59}$`; 409 if taken |
+| PUT | /api/flows/{name}/draft | Operator | `{ definition, revision, title?, description? }`. A stale revision returns 409 `DraftChanged`; incomplete drafts are allowed and the report is returned |
+| POST | /api/flows/{name}/publish | Operator | `{ revision }`. Only a valid saved draft becomes version n+1 (400 with report otherwise, 503 if a catalog was unreachable) |
+| GET | /api/flows/{name}/export?version= | Viewer/Operator | `eih-flow` document of the draft or a version |
+| POST | /api/flows/import | Operator | `{ document, name? }`. Always creates a new draft; 409 if the name exists |
+
+Limits: 150 actions, 6 nesting levels, 256 KB per definition, 500-character expressions. See [docs/designer](docs/designer/README.md).

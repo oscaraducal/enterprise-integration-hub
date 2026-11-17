@@ -157,3 +157,15 @@ test('Viewers can open designs but not change them, and the designer fits a phon
   await page.waitForTimeout(300);
   expect(await noOverflow(page)).toBe(true);
 });
+
+test('Designer guides are listed as Design only and open the Integration Designer', async ({ page }) => {
+  await login(page);
+  await nav(page, 'Scenarios');
+  const card = page.getByRole('article', { name: 'DSN-001 Design the customer master flow' });
+  await expect(card).toContainText('Design only');
+  await card.getByRole('button', { name: 'Open guide' }).click();
+  await expect(page.getByRole('heading', { name: 'Design the customer master flow' })).toBeVisible();
+  for (const id of ['DSN-002', 'DSN-003']) await expect(page.getByRole('tab', { name: id })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Designer →' }).first().click();
+  await expect(page.getByRole('heading', { name: 'Integration Designer', exact: true })).toBeVisible();
+});

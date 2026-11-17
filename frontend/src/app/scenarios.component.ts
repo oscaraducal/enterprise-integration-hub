@@ -17,7 +17,7 @@ import { GLOSSARY, PIPELINE, SCENARIOS, ScenarioDef } from './catalog';
       @for (s of scenarios; track s.id) {
         <article class="panel scenario-card" [class.planned]="s.status === 'Planned'" [attr.aria-label]="s.id + ' ' + s.title">
           <div class="section-heading"><div><span class="eyebrow">{{s.id}}</span><h2>{{s.title}}</h2></div>
-            <span class="pill" [class]="s.status === 'Implemented' ? 'pill Completed' : 'pill Pending'">{{s.status}}</span></div>
+            <span class="pill" [class]="s.status === 'Implemented' ? 'pill Completed' : s.status === 'Design only' ? 'pill Running' : 'pill Pending'">{{s.status}}</span></div>
           <div class="card-body">
             <p class="route-line"><b>{{s.source}}</b> → <b>{{s.target}}</b></p>
             <p>{{s.businessCase}}</p>
@@ -29,6 +29,10 @@ import { GLOSSARY, PIPELINE, SCENARIOS, ScenarioDef } from './catalog';
               @if (s.status === 'Implemented') {
                 <button mat-flat-button (click)="open.emit({ view: 'Guides', scenario: s.id })">Open guide</button>
                 <button mat-stroked-button (click)="open.emit({ view: 'Mapping Studio', kind: s.id === 'SCN-002' ? 'order' : 'customer', id: s.id === 'SCN-002' ? 'ORD-013' : 'C-300' })">Mapping Studio</button>
+              } @else if (s.status === 'Design only') {
+                <button mat-flat-button (click)="open.emit({ view: 'Guides', scenario: s.id })">Open guide</button>
+                <button mat-stroked-button (click)="open.emit({ view: 'Integration Designer' })">Integration Designer</button>
+                <span class="hint">Designed and validated now; runs in Milestone D.</span>
               } @else { <span class="hint">Documented design only. Not implemented in this release.</span> }
               <a class="doc-link" [href]="s.doc" target="_blank" rel="noopener">Documentation ↗</a>
             </div>
@@ -63,7 +67,7 @@ export class ScenariosComponent implements OnChanges {
   @Input() scenario: string | undefined;
   @Output() open = new EventEmitter<Focus>();
   readonly scenarios = SCENARIOS;
-  readonly implemented = SCENARIOS.filter(s => s.status === 'Implemented');
+  readonly implemented = SCENARIOS.filter(s => s.status !== 'Planned');
   readonly glossary = GLOSSARY;
   readonly pipeline = PIPELINE;
   active = signal<ScenarioDef>(this.implemented[0]);
