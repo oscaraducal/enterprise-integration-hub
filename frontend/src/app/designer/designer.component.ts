@@ -1,4 +1,4 @@
-import { Component, ElementRef, HostListener, OnDestroy, OnInit, TemplateRef, ViewChild, ViewContainerRef, computed, effect, inject, input, output, signal } from '@angular/core';
+import { Component, ElementRef, HostListener, Injector, OnDestroy, OnInit, TemplateRef, ViewChild, ViewContainerRef, WritableSignal, afterNextRender, computed, effect, inject, input, output, signal } from '@angular/core';
 import { Overlay, OverlayRef } from '@angular/cdk/overlay';
 import { CdkScrollable } from '@angular/cdk/scrolling';
 import { TemplatePortal } from '@angular/cdk/portal';
@@ -44,10 +44,10 @@ const HISTORY_LIMIT = 100;
 @Component({
   selector: 'app-designer', standalone: true, imports: [CommonModule, FormsModule, MatButtonModule, CdkScrollable, ModalComponent, NodePropertiesComponent, EndpointWizardComponent],
   template: `
-  <div class="designer" [class.fullscreen]="fullscreen()" [class.palette-hidden]="!showPalette()">
+  <div class="designer" [class.fullscreen]="fullscreen()" [class.palette-hidden]="!showPalette()" [class.props-hidden]="!showProps()" [class.bottom-hidden]="!showBottom()">
     <header class="designer-top" role="region" aria-label="Integration header">
-      <button type="button" class="back-btn" (click)="back.emit()" aria-label="Back to Integrations"><span aria-hidden="true">←</span> Integrations</button>
-      <nav class="crumbs" aria-label="Breadcrumb"><ol><li><button type="button" class="link-button" (click)="back.emit()">Integrations</button></li><li aria-current="page">{{current()?.title ?? flowName()}}</li></ol></nav>
+      <button type="button" class="back-btn" (click)="back.emit()" [attr.aria-label]="backTo() === 'project' ? 'Back to project' : 'Back to Integrations'"><span aria-hidden="true">←</span> {{backTo() === 'project' ? 'Project' : 'Integrations'}}</button>
+      <nav class="crumbs" aria-label="Breadcrumb"><ol><li>Integration Workbench</li><li><button type="button" class="link-button" (click)="back.emit()">{{backTo() === 'project' ? 'Practice Project' : 'Integrations'}}</button></li><li aria-current="page">{{current()?.title ?? flowName()}}</li></ol></nav>
       @if (current(); as c) {
         <div class="designer-id"><h1>{{c.title}}</h1>
           <span class="muted small"><code>{{c.identifier}}</code> · {{c.versionLabel}} · {{styleLabel(c.style)}}</span>
@@ -65,7 +65,11 @@ const HISTORY_LIMIT = 100;
     </header>
     <div class="designer-bar" role="toolbar" aria-label="Designer toolbar">
       @if (current(); as c) {
-        <button type="button" class="tool" (click)="showPalette.set(!showPalette())" [attr.aria-pressed]="showPalette()" aria-label="Toggle action palette" title="Show or hide the action palette">☰</button>
+        <div class="tool-group" aria-label="Panels">
+          <button type="button" class="tool" (click)="togglePanel(showPalette)" [attr.aria-pressed]="showPalette()" aria-label="Toggle action palette" title="Show or hide the actions and connections panel">☰</button>
+          <button type="button" class="tool" (click)="togglePanel(showProps)" [attr.aria-pressed]="showProps()" aria-label="Toggle properties panel" title="Show or hide properties">▤</button>
+          <button type="button" class="tool" (click)="togglePanel(showBottom)" [attr.aria-pressed]="showBottom()" aria-label="Toggle bottom panel" title="Show or hide Problems, Variables, Versions, JSON and Execution">▁</button>
+        </div>
         <div class="tool-group" aria-label="Edit">
           <button type="button" class="tool" (click)="undo()" [disabled]="!undoStack().length || readOnly()" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
           <button type="button" class="tool" (click)="redo()" [disabled]="!redoStack().length || readOnly()" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
@@ -77,10 +81,14 @@ const HISTORY_LIMIT = 100;
         </div>
         <div class="tool-group" aria-label="View">
           <div class="layout-switch" role="radiogroup" aria-label="Layout">@for (l of layouts; track l) { <button type="button" role="radio" [attr.aria-checked]="layout() === l" [class.active]="layout() === l" (click)="setLayout(l)">{{l}}</button> }</div>
-          <button type="button" class="tool" (click)="setZoom(zoom() - 0.1)" aria-label="Zoom out" [disabled]="layout() === 'Outline'">−</button>
-          <button type="button" class="tool zoom-label" (click)="setZoom(1)" aria-label="Reset zoom">{{zoom() * 100 | number:'1.0-0'}}%</button>
-          <button type="button" class="tool" (click)="setZoom(zoom() + 0.1)" aria-label="Zoom in">+</button>
-          <button type="button" class="tool" (click)="fit()" aria-label="Fit to screen" title="Fit to screen">⤢</button>
+          <button type="button" class="tool" (click)="handMode.set(!handMode())" [attr.aria-pressed]="handMode()" aria-label="Hand mode" title="Hand mode: drag anywhere to move the canvas (or hold Space, or drag the empty background)" [disabled]="layout() === 'Outline'">✋</button>
+          <button type="button" class="tool" (click)="setZoom(zoom() - 0.1)" aria-label="Zoom out" title="Zoom out (Ctrl + wheel zooms at the pointer)" [disabled]="layout() === 'Outline'">−</button>
+          <button type="button" class="tool zoom-label" (click)="setZoom(1)" aria-label="Reset zoom" [disabled]="layout() === 'Outline'">{{zoom() * 100 | number:'1.0-0'}}%</button>
+          <button type="button" class="tool" (click)="setZoom(zoom() + 0.1)" aria-label="Zoom in" [disabled]="layout() === 'Outline'">+</button>
+          <button type="button" class="tool" (click)="fit()" aria-label="Fit to screen" title="Fit the whole flow" [disabled]="layout() === 'Outline'">⤢</button>
+          <button type="button" class="tool" (click)="centerSelected()" aria-label="Center selected action" title="Center the selected action" [disabled]="!selectedId() || layout() === 'Outline'">⌖</button>
+          <button type="button" class="tool" (click)="previousView()" aria-label="Previous view" title="Return to the previous view" [disabled]="!viewHistory().length || layout() === 'Outline'">⟲</button>
+          <button type="button" class="tool" (click)="showMinimap.set(!showMinimap())" [attr.aria-pressed]="showMinimap()" aria-label="Toggle overview map" title="Show or hide the overview map" [disabled]="layout() === 'Outline'">▣</button>
           <label class="search-box"><span class="sr-only">Search actions</span><input type="search" placeholder="Search actions…" [ngModel]="search()" (ngModelChange)="search.set($event)" (keyup.enter)="nextMatch()" aria-label="Search actions"></label>
           @if (search()) { <span class="muted small">{{matches().length}} match(es)</span> }
           <button type="button" class="tool" (click)="fullscreen.set(!fullscreen())" [attr.aria-pressed]="fullscreen()" aria-label="Full screen" title="Full screen">⛶</button>
@@ -94,6 +102,12 @@ const HISTORY_LIMIT = 100;
       <div class="designer-main">
         @if (showPalette()) {
         <aside class="palette" aria-label="Action palette">
+          <h2>Connections</h2>
+          <ul>@for (c of invokeConnections(); track c.identifier) {
+            <li><button type="button" class="palette-item conn" [disabled]="readOnly()" [draggable]="!readOnly()" (dragstart)="dragConnection($event, c.identifier)" (click)="addConnectionInvoke(c.identifier)"
+              [title]="'Invoke ' + c.name + ': drag onto a + or click to add after the selected action'" [attr.aria-label]="'Invoke with connection ' + c.identifier">
+              <span class="icon" aria-hidden="true">⇄</span><span class="conn-text">{{c.name}}<small>{{c.identifier}}</small></span></button></li>
+          } @empty { <li class="hint">No Invoke connections yet. Create one in Connections.</li> }</ul>
           <h2>Actions</h2>
           @for (cat of categories; track cat) {
             <h3>{{cat}}</h3>
@@ -108,9 +122,13 @@ const HISTORY_LIMIT = 100;
         </aside>
         }
 
-        <section class="canvas-wrap" cdkScrollable #canvasWrap aria-label="Flow canvas" (click)="select(null)">
+        <div class="canvas-area">
+        <section class="canvas-wrap" cdkScrollable #canvasWrap aria-label="Flow canvas" [attr.aria-describedby]="'canvas-help'"
+          [class.can-pan]="(handMode() || spaceHeld()) && layout() !== 'Outline'" [class.panning]="panning()"
+          (click)="select(null)" (pointerdown)="panStart($event)"
+          (wheel)="onWheel($event)" (scroll)="onScroll()">
           @if (layout() === 'Outline') { <ng-container *ngTemplateOutlet="outline"></ng-container> } @else {
-          <div class="canvas" #canvas [class.horizontal]="layout() === 'Horizontal'" [style.transform]="'scale(' + zoom() + ')'">
+          <div class="canvas" #canvas [class.horizontal]="layout() === 'Horizontal'" [style.zoom]="zoom()">
             <div class="flow-title"><input aria-label="Flow title" class="title-input" [ngModel]="c.title" (ngModelChange)="setTitle($event)" [disabled]="readOnly()" maxlength="80" (click)="$event.stopPropagation()">
               <small class="muted">{{c.identifier}} · {{c.versionLabel}} · {{styleLabel(c.style)}} · {{c.versions.length ? 'published v' + c.versions[0].version : 'never published'}} · draft rev {{c.revision}}</small></div>
             <div class="flow-line">
@@ -125,18 +143,33 @@ const HISTORY_LIMIT = 100;
           </div>
           }
         </section>
+        <p class="sr-only" id="canvas-help">Drag the empty background, hold Space and drag, or use the middle mouse button to move the canvas. Ctrl and the mouse wheel zoom at the pointer.</p>
+        @if (showMinimap() && layout() !== 'Outline' && mini(); as m) {
+          <div class="minimap" role="group" aria-label="Overview map" [style.width.px]="m.w" [style.height.px]="m.h" (pointerdown)="miniPointer($event)" (pointermove)="$event.buttons === 1 && miniPointer($event)">
+            <svg [attr.width]="m.w" [attr.height]="m.h" aria-hidden="true">
+              @for (b of m.boxes; track $index) { <rect [attr.x]="b.x" [attr.y]="b.y" [attr.width]="b.w" [attr.height]="b.h" [class]="b.cls" rx="1.5"></rect> }
+              <rect class="mm-view" [attr.x]="m.vx" [attr.y]="m.vy" [attr.width]="m.vw" [attr.height]="m.vh"></rect>
+            </svg>
+          </div>
+        }
+        </div>
 
+        @if (showProps()) {
         <aside class="properties" aria-label="Properties">
           <app-node-properties [api]="api()" [node]="selectedNode()" [def]="selectedDef()" [variables]="scopeVars()" [functions]="catalog()?.functions ?? []"
             [catalogs]="tables()" [issues]="selectedIssues()" [readOnly]="readOnly()" [connections]="connections()" (changed)="updateNode($event)"
             (editEndpoint)="editEndpoint($event)" (configureTrigger)="configureTrigger()" (addMapping)="addMapping($event)"></app-node-properties>
         </aside>
+        }
       </div>
 
       <section class="bottom-panel" aria-label="Designer panel">
         <div class="tabs" role="tablist" aria-label="Designer panel tabs">
-          @for (t of bottomTabs; track t) { <button role="tab" [attr.aria-selected]="bottomTab() === t" [class.active]="bottomTab() === t" (click)="bottomTab.set(t)">{{t}}{{t === 'Problems' ? ' (' + (report()?.issues?.length ?? 0) + ')' : ''}}</button> }
+          @for (t of bottomTabs; track t) { <button role="tab" [attr.aria-selected]="showBottom() && bottomTab() === t" [class.active]="showBottom() && bottomTab() === t" (click)="openBottom(t)">{{t}}{{t === 'Problems' ? ' (' + (report()?.issues?.length ?? 0) + ')' : ''}}</button> }
+          <button type="button" class="link-button bottom-toggle" (click)="togglePanel(showBottom)" [attr.aria-expanded]="showBottom()">{{showBottom() ? 'Hide panel ▾' : 'Show panel ▴'}}</button>
         </div>
+        @if (showBottom()) {
+        <div class="bottom-body">
         @switch (bottomTab()) {
           @case ('Problems') {
             <ul class="problems">@for (i of report()?.issues ?? []; track $index) {
@@ -155,7 +188,9 @@ const HISTORY_LIMIT = 100;
             } @empty { <li class="hint">Not published yet. Publishing stores an immutable version; the draft stays editable.</li> }</ul>
           }
           @case ('JSON') { <pre class="response-body" tabindex="0" aria-label="Flow JSON">{{flow() | json}}</pre> }
-          @case ('Execution') { <p class="hint pad">Execution is not available yet. Milestone D adds a bounded executor for the supported actions, with a per-action trace here.</p> }
+          @case ('Execution') { <p class="hint pad">Execution is not available yet. Milestone D adds a bounded executor for the supported actions, with a per-action trace here. Runtime instances will appear in Monitoring.</p> }
+        }
+        </div>
         }
       </section>
     } @else {
@@ -181,10 +216,11 @@ const HISTORY_LIMIT = 100;
   </ng-template>
   <ng-template #card let-node>
     <div class="node" [class]="'node type-' + node.type" [class.selected]="selectedId() === node.id" [class.match]="isMatch(node)" [class.error]="nodeErrors(node.id) > 0"
-      [attr.data-node-id]="node.id" [draggable]="!readOnly() && node.type !== 'trigger'" (dragstart)="dragNode($event, node)" (click)="$event.stopPropagation(); select(node.id)">
-      <button type="button" class="node-head" (click)="$event.stopPropagation(); select(node.id)" [attr.aria-label]="label(node) + (nodeErrors(node.id) ? ', ' + nodeErrors(node.id) + ' error(s)' : '')" [attr.aria-pressed]="selectedId() === node.id">
+      [attr.data-node-id]="node.id" (click)="$event.stopPropagation(); select(node.id)">
+      <button type="button" class="node-head" [draggable]="!readOnly() && node.type !== 'trigger' && !handMode() && !spaceHeld()" (dragstart)="dragNode($event, node)" (click)="$event.stopPropagation(); select(node.id)" [attr.aria-label]="label(node) + (nodeErrors(node.id) ? ', ' + nodeErrors(node.id) + ' error(s)' : '')" [attr.aria-pressed]="selectedId() === node.id">
         <span class="icon" aria-hidden="true">{{icon(node.type)}}</span>
-        <span class="node-text"><b>{{node.name}}</b><small>{{summary(node)}}</small></span>
+        <span class="node-text"><span class="node-type">{{typeLabel(node)}}@if (connectionOf(node); as cn) { <span class="conn-chip" [title]="'Connection ' + cn">⚭ {{cn}}</span> }</span>
+          <b>{{node.name}}</b><small>{{summary(node)}}</small></span>
         @if (nodeErrors(node.id)) { <span class="badge err" aria-hidden="true">{{nodeErrors(node.id)}}</span> }
         @else if (nodeWarnings(node.id)) { <span class="badge warn" aria-hidden="true">!</span> }
       </button>
@@ -273,8 +309,15 @@ export class DesignerComponent implements OnInit, OnDestroy {
   api = input.required<Api>();
   /** The integration (flow name) this Designer edits. */
   flowName = input.required<string>();
-  /** Back to the Integrations list (the route guard asks about unsaved changes). */
+  /** Where Back returns: the Integrations list or the project it was opened from. */
+  backTo = input<'integrations' | 'project'>('integrations');
+  /** Back to the Integrations list or project (the route guard asks about unsaved changes). */
   back = output<void>();
+  private injector = inject(Injector);
+  showProps = signal(true); showBottom = signal(true); showMinimap = signal(true);
+  handMode = signal(false); spaceHeld = signal(false); panning = signal(false);
+  viewHistory = signal<{ zoom: number; left: number; top: number }[]>([]);
+  mini = signal<{ w: number; h: number; boxes: { x: number; y: number; w: number; h: number; cls: string }[]; vx: number; vy: number; vw: number; vh: number } | null>(null);
   @ViewChild('picker') pickerTpl?: TemplateRef<unknown>;
   private overlay = inject(Overlay);
   private vcr = inject(ViewContainerRef);
@@ -282,7 +325,7 @@ export class DesignerComponent implements OnInit, OnDestroy {
   private pickerRef: OverlayRef | null = null;
   private pickerAnchor: HTMLElement | null = null;
   private validateSeq = 0;
-  @ViewChild('canvasWrap') canvasWrap?: ElementRef<HTMLElement>;
+  canvasWrap?: ElementRef<HTMLElement>;
   @ViewChild('canvas') canvas?: ElementRef<HTMLElement>;
   readonly categories = CATEGORY_ORDER;
   readonly bottomTabs = ['Problems', 'Variables', 'Versions', 'JSON', 'Execution'] as const;
@@ -326,6 +369,10 @@ export class DesignerComponent implements OnInit, OnDestroy {
   constructor() {
     // The anchored picker follows zoom and layout changes; Outline has no + slots, so it closes there.
     effect(() => { this.zoom(); if (this.layout() === 'Outline') this.closePicker(false); else queueMicrotask(() => this.pickerRef?.updatePosition()); });
+    effect(() => {
+      this.flow(); this.zoom(); this.layout(); this.collapsed(); this.showFault(); this.selectedId(); this.report(); this.showMinimap();
+      afterNextRender(() => this.measureMini(), { injector: this.injector });
+    });
   }
   async ngOnInit() {
     this.session.register(() => this.confirmLeave());
@@ -342,7 +389,8 @@ export class DesignerComponent implements OnInit, OnDestroy {
       }
     } catch (e) { this.fail(e); } finally { this.busy.set(false); }
   }
-  ngOnDestroy() { clearTimeout(this.validateTimer); this.closePicker(false); this.session.register(null); }
+  ngOnDestroy() { clearTimeout(this.validateTimer); this.closePicker(false); this.session.register(null); this.resize?.disconnect();
+    document.removeEventListener('pointermove', this.onPanMove); document.removeEventListener('pointerup', this.onPanEnd); document.removeEventListener('pointercancel', this.onPanEnd); }
 
   // ----------------------------------------------------------- leaving the Designer
   /** Route guard: leave freely when saved; otherwise ask whether to save, keep the changes for later, discard them or stay. */
@@ -569,9 +617,12 @@ export class DesignerComponent implements OnInit, OnDestroy {
     this.pickerRef = this.overlay.create({
       positionStrategy: position, scrollStrategy: this.overlay.scrollStrategies.reposition(),
       panelClass: sheet ? ['picker-pane', 'picker-sheet'] : 'picker-pane', hasBackdrop: sheet, backdropClass: 'cdk-overlay-dark-backdrop',
-      width: sheet ? '100%' : undefined,
+      // A fixed pane size lets the position be chosen correctly before the content has rendered.
+      width: sheet ? '100%' : 360, height: sheet ? '78vh' : 'min(460px, 72vh)',
     });
     this.pickerRef.attach(new TemplatePortal(this.pickerTpl, this.vcr, { lane, index }));
+    // The content renders on the next change detection; position again with its real size so the best side is chosen.
+    afterNextRender(() => this.pickerRef?.updatePosition(), { injector: this.injector });
     this.pickerRef.keydownEvents().subscribe(e => { if (e.key === 'Escape') { e.preventDefault(); this.closePicker(); } });
     this.pickerRef.backdropClick().subscribe(() => this.closePicker());
     this.pickerRef.outsidePointerEvents().subscribe(e => { if (!anchor.contains(e.target as Node)) this.closePicker(false); });
@@ -811,6 +862,169 @@ export class DesignerComponent implements OnInit, OnDestroy {
     return '—';
   }
 
+  // ----------------------------------------------------------- viewport: pan, zoom, fit, center, overview map
+  /**
+   * The canvas uses CSS zoom (not a transform), so scroll extents, element rectangles, pointer coordinates and the
+   * anchored + popup all agree with what is drawn. Native scrolling handles wheel and trackpad; pointer drags pan by
+   * changing the scroll position; Ctrl + wheel zooms around the pointer. The flow model is never touched.
+   */
+  private wrapEl?: HTMLElement;
+  private pan: { id: number; x: number; y: number; left: number; top: number; moved: boolean } | null = null;
+  private suppressClick = false;
+  private resize?: ResizeObserver;
+  /** Whether the pointer is over the canvas (a :hover check: mouse enter/leave events are suppressed during a pan). */
+  private overCanvas() { return !!this.wrapEl?.matches(':hover'); }
+  @ViewChild('canvasWrap') set canvasWrapRef(ref: ElementRef<HTMLElement> | undefined) {
+    const el = ref?.nativeElement;
+    if (el === this.wrapEl) return;
+    this.resize?.disconnect(); this.wrapEl = el; this.canvasWrap = ref;
+    if (!el) return;
+    // A drag that panned must not also select (or deselect) what was under the pointer.
+    el.addEventListener('click', e => { if (this.suppressClick) { this.suppressClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
+    this.resize = new ResizeObserver(() => this.measureMini()); this.resize.observe(el);
+    this.measureMini();
+  }
+  private isEditable(t: EventTarget | null) { return !!(t as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable], app-modal, .picker'); }
+  panMode() { return this.handMode() || this.spaceHeld(); }
+  panStart(e: PointerEvent) {
+    const wrap = this.wrapEl; if (!wrap || this.layout() === 'Outline' || this.isEditable(e.target)) return;
+    const onControl = !!(e.target as HTMLElement).closest('button, a, label, .slot, .node-head, .minimap');
+    const start = e.button === 1 || (e.button === 0 && (this.panMode() || !onControl));
+    if (!start) return;
+    // No middle-button autoscroll, text selection (whose autoscroll would fight the pan) or drag start; clicks still fire.
+    e.preventDefault();
+    this.pan = { id: e.pointerId, x: e.clientX, y: e.clientY, left: wrap.scrollLeft, top: wrap.scrollTop, moved: false };
+    // Follow the pointer on the whole document, so the drag keeps working when it leaves the canvas.
+    document.addEventListener('pointermove', this.onPanMove);
+    document.addEventListener('pointerup', this.onPanEnd);
+    document.addEventListener('pointercancel', this.onPanEnd);
+  }
+  private onPanMove = (e: PointerEvent) => this.panMove(e);
+  private onPanEnd = (e: PointerEvent) => this.panEnd(e);
+  panMove(e: PointerEvent) {
+    const p = this.pan, wrap = this.wrapEl; if (!p || !wrap || e.pointerId !== p.id) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    if (!p.moved) {
+      if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;          // a click, not a drag
+      p.moved = true; this.panning.set(true); this.closePicker(false);
+    }
+    e.preventDefault();
+    wrap.scrollLeft = p.left - dx; wrap.scrollTop = p.top - dy;
+  }
+  panEnd(e: PointerEvent) {
+    const p = this.pan; if (!p || e.pointerId !== p.id) return;
+    this.pan = null;
+    document.removeEventListener('pointermove', this.onPanMove);
+    document.removeEventListener('pointerup', this.onPanEnd);
+    document.removeEventListener('pointercancel', this.onPanEnd);
+    if (p.moved) { this.suppressClick = true; this.panning.set(false); setTimeout(() => this.suppressClick = false); }
+  }
+  /** Space held over the canvas arms panning (called from the single document keydown listener, onKey). */
+  spaceDown(e: KeyboardEvent) {
+    if (e.code !== 'Space' || !this.overCanvas() || this.isEditable(e.target) || this.layout() === 'Outline') return;
+    e.preventDefault(); if (!e.repeat) this.spaceHeld.set(true);
+  }
+  @HostListener('document:keyup', ['$event']) spaceUp(e: KeyboardEvent) {
+    if (e.code === 'Space' && this.spaceHeld()) { e.preventDefault(); this.spaceHeld.set(false); }
+  }
+  @HostListener('window:blur') windowBlur() { this.spaceHeld.set(false); }
+  onWheel(e: WheelEvent) {
+    if (!(e.ctrlKey || e.metaKey) || this.layout() === 'Outline') return;  // plain wheel / trackpad scrolls natively
+    e.preventDefault();
+    this.zoomAt(this.zoom() * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX, e.clientY);
+  }
+  onScroll() { this.updateMiniView(); }
+  private clampZoom(z: number) { return Math.round(Math.min(2, Math.max(0.1, z)) * 100) / 100; }
+  /** Zooms keeping the content point under (clientX, clientY), or the viewport centre, in place. */
+  zoomAt(z: number, clientX?: number, clientY?: number) {
+    const wrap = this.wrapEl, canvas = this.canvas?.nativeElement, next = this.clampZoom(z), prev = this.zoom();
+    if (!wrap || !canvas || next === prev) { this.zoom.set(next); return; }
+    const r = wrap.getBoundingClientRect();
+    const px = (clientX ?? r.left + wrap.clientWidth / 2) - r.left, py = (clientY ?? r.top + wrap.clientHeight / 2) - r.top;
+    const ox = canvas.offsetLeft, oy = canvas.offsetTop;
+    const cx = (wrap.scrollLeft + px - ox) / prev, cy = (wrap.scrollTop + py - oy) / prev;
+    this.zoom.set(next);
+    afterNextRender(() => { wrap.scrollLeft = cx * next + ox - px; wrap.scrollTop = cy * next + oy - py; this.measureMini(); }, { injector: this.injector });
+  }
+  setZoom(z: number) { this.zoomAt(z); }
+  private remember() {
+    const wrap = this.wrapEl; if (!wrap) return;
+    this.viewHistory.set([...this.viewHistory(), { zoom: this.zoom(), left: wrap.scrollLeft, top: wrap.scrollTop }].slice(-20));
+  }
+  /** Fits the whole flow into the viewport (never enlarging past 100%) and centres it. */
+  fit() {
+    const wrap = this.wrapEl, canvas = this.canvas?.nativeElement; if (!wrap || !canvas) return;
+    this.remember();
+    const z = this.zoom(), rect = canvas.getBoundingClientRect();
+    const naturalW = rect.width / z, naturalH = rect.height / z;
+    const next = this.clampZoom(Math.floor(Math.min((wrap.clientWidth - 24) / naturalW, (wrap.clientHeight - 24) / naturalH, 1) * 20) / 20);
+    this.zoom.set(next);
+    afterNextRender(() => { wrap.scrollTo({ left: (wrap.scrollWidth - wrap.clientWidth) / 2, top: 0 }); this.measureMini(); }, { injector: this.injector });
+  }
+  /** Scrolls so an action's card is in the middle of the viewport; the previous view can be restored. */
+  centerOn(id: string, smooth = true) {
+    const wrap = this.wrapEl; if (!wrap) return;
+    const el = wrap.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"] > .node-head`) ?? wrap.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
+    if (!el) return;
+    this.remember();
+    const w = wrap.getBoundingClientRect(), r = el.getBoundingClientRect();
+    wrap.scrollTo({ left: wrap.scrollLeft + (r.left + r.width / 2) - (w.left + wrap.clientWidth / 2),
+      top: wrap.scrollTop + (r.top + r.height / 2) - (w.top + wrap.clientHeight / 2), behavior: smooth ? 'smooth' : 'auto' });
+  }
+  centerSelected() { const id = this.selectedId(); if (id) this.centerOn(id); }
+  previousView() {
+    const stack = this.viewHistory(); const v = stack.at(-1); const wrap = this.wrapEl; if (!v || !wrap) return;
+    this.viewHistory.set(stack.slice(0, -1)); this.zoom.set(v.zoom);
+    afterNextRender(() => { wrap.scrollTo({ left: v.left, top: v.top }); this.measureMini(); }, { injector: this.injector });
+  }
+  /** Opening or closing a side panel changes the canvas width; keep the same content point in the middle. */
+  togglePanel(panel: WritableSignal<boolean>) {
+    const wrap = this.wrapEl;
+    const center = wrap ? { x: wrap.scrollLeft + wrap.clientWidth / 2, y: wrap.scrollTop + wrap.clientHeight / 2 } : null;
+    panel.set(!panel());
+    if (center) afterNextRender(() => {
+      const w = this.wrapEl; if (!w) return;
+      w.scrollLeft = center.x - w.clientWidth / 2; w.scrollTop = center.y - w.clientHeight / 2; this.measureMini();
+    }, { injector: this.injector });
+  }
+  openBottom(tab: typeof this.bottomTabs[number]) { this.bottomTab.set(tab); if (!this.showBottom()) this.togglePanel(this.showBottom); }
+  /** Overview map: action boxes and the visible window, in scroll coordinates scaled to at most 200 × 140 px. */
+  measureMini() {
+    const wrap = this.wrapEl;
+    if (!wrap || !this.showMinimap() || this.layout() === 'Outline') { this.mini.set(null); return; }
+    const W = Math.max(wrap.scrollWidth, 1), H = Math.max(wrap.scrollHeight, 1);
+    const k = Math.min(200 / W, 140 / H), wr = wrap.getBoundingClientRect();
+    const boxes = Array.from(wrap.querySelectorAll<HTMLElement>('.node-head')).map(el => {
+      const r = el.getBoundingClientRect(), node = el.closest('.node');
+      return { x: (r.left - wr.left + wrap.scrollLeft) * k, y: (r.top - wr.top + wrap.scrollTop) * k, w: Math.max(2, r.width * k), h: Math.max(2, r.height * k),
+        cls: node?.classList.contains('selected') ? 'mm-node sel' : node?.classList.contains('error') ? 'mm-node err' : 'mm-node' };
+    });
+    this.miniScale = k;
+    this.mini.set({ w: Math.ceil(W * k), h: Math.ceil(H * k), boxes, vx: wrap.scrollLeft * k, vy: wrap.scrollTop * k, vw: wrap.clientWidth * k, vh: wrap.clientHeight * k });
+  }
+  private miniScale = 1;
+  private updateMiniView() {
+    const m = this.mini(), wrap = this.wrapEl; if (!m || !wrap) return;
+    const k = this.miniScale;
+    this.mini.set({ ...m, vx: wrap.scrollLeft * k, vy: wrap.scrollTop * k });
+  }
+  miniPointer(e: PointerEvent) {
+    const wrap = this.wrapEl; if (!wrap) return;
+    e.preventDefault(); e.stopPropagation();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect(), k = this.miniScale;
+    wrap.scrollTo({ left: (e.clientX - r.left) / k - wrap.clientWidth / 2, top: (e.clientY - r.top) / k - wrap.clientHeight / 2 });
+  }
+  invokeConnections = computed(() => this.connections().filter(c => c.role === 'Invoke' || c.role === 'TriggerAndInvoke'));
+  connectionOf(n: FlowNode): string | null {
+    return n.type === 'invoke' ? n.config?.['connection'] ?? null : n.type === 'trigger' && n.config?.['mode'] === 'rest' ? n.config?.['connection'] ?? null : null;
+  }
+  dragConnection(e: DragEvent, id: string) { e.dataTransfer?.setData('application/x-eih-connection', id); e.dataTransfer!.effectAllowed = 'copy'; }
+  addConnectionInvoke(id: string) {
+    const sel = this.selectedId() ? locate(this.flow(), this.selectedId()!) : null;
+    if (sel) this.openInvokeWizard(sel.lane, sel.index + 1, { connection: id });
+    else this.openInvokeWizard({ kind: 'root' }, Math.max(0, this.flow().steps.length - (END_TYPES.includes(this.flow().steps.at(-1)?.type ?? '') ? 1 : 0)), { connection: id });
+  }
+
   // ----------------------------------------------------------- drag and drop
   key(lane: Lane, index: number) { return laneKey(lane) + '@' + index; }
   dragAction(e: DragEvent, a: ActionDef) { e.dataTransfer?.setData('application/x-eih-action', a.type); e.dataTransfer!.effectAllowed = 'copy'; }
@@ -824,7 +1038,9 @@ export class DesignerComponent implements OnInit, OnDestroy {
     const type = e.dataTransfer?.getData('application/x-eih-action');
     const nodeId = e.dataTransfer?.getData('application/x-eih-node');
     const def = this.catalog()?.actions.find(a => a.type === type);
-    if (def && def.status !== 'Planned') this.insert(def, lane, index);
+    const connection = e.dataTransfer?.getData('application/x-eih-connection');
+    if (connection) this.openInvokeWizard(lane, index, { connection });
+    else if (def && def.status !== 'Planned') this.insert(def, lane, index);
     else if (nodeId) this.move(nodeId, lane, index);
   }
 
@@ -835,16 +1051,20 @@ export class DesignerComponent implements OnInit, OnDestroy {
     // Expand collapsed ancestors so the node is visible.
     const ancestors = allNodes(this.flow()).filter(n => descendants(n).some(d => d.id === id)).map(n => n.id);
     if (ancestors.some(a => this.collapsed().has(a))) this.collapsed.set(new Set([...this.collapsed()].filter(c => !ancestors.includes(c))));
-    setTimeout(() => document.querySelector(`[data-node-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' }));
+    afterNextRender(() => this.layout() === 'Outline'
+      ? document.querySelector(`[data-node-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'center' })
+      : this.centerOn(id), { injector: this.injector });
   }
-  toggle(id: string) { const s = new Set(this.collapsed()); s.has(id) ? s.delete(id) : s.add(id); this.collapsed.set(s); }
+  toggle(id: string) {
+    const wrap = this.wrapEl, head = wrap?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"] > .node-head`);
+    const before = head?.getBoundingClientRect();
+    const s = new Set(this.collapsed()); s.has(id) ? s.delete(id) : s.add(id); this.collapsed.set(s);
+    if (wrap && before) afterNextRender(() => {
+      const after = wrap.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"] > .node-head`)?.getBoundingClientRect();
+      if (after) { wrap.scrollLeft += after.left - before.left; wrap.scrollTop += after.top - before.top; }
+    }, { injector: this.injector });
+  }
   countInside(n: FlowNode) { return descendants(n).length; }
-  setZoom(z: number) { this.zoom.set(Math.round(Math.min(1.5, Math.max(0.4, z)) * 10) / 10); }
-  fit() {
-    const wrap = this.canvasWrap?.nativeElement, canvas = this.canvas?.nativeElement; if (!wrap || !canvas) return;
-    const scale = Math.min((wrap.clientWidth - 32) / canvas.scrollWidth, (wrap.clientHeight - 32) / canvas.scrollHeight, 1.5);
-    this.setZoom(Math.floor(scale * 10) / 10); wrap.scrollTo({ top: 0, left: 0 });
-  }
   isMatch(n: FlowNode) { return !!this.search().trim() && this.matches().some(m => m.id === n.id); }
   nextMatch() {
     const list = this.matches(); if (!list.length) return;
@@ -882,7 +1102,9 @@ export class DesignerComponent implements OnInit, OnDestroy {
     }
   }
 
+  // One document keydown listener per component: Angular binds only one method per host event.
   @HostListener('document:keydown', ['$event']) onKey(e: KeyboardEvent) {
+    this.spaceDown(e); if (this.spaceHeld()) return;
     const target = e.target as HTMLElement;
     if (!this.current() || target.closest('input, textarea, select, [contenteditable], .mapper-shell, app-modal, .picker')) return;
     const mod = e.ctrlKey || e.metaKey;
