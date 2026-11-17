@@ -22,6 +22,7 @@ public class DemoFactory<T> : WebApplicationFactory<T> where T : class
     public static readonly string Password = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
     public static readonly string ServiceKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private readonly string path = Path.Combine(Path.GetTempPath(), $"integration-test-{Guid.NewGuid():N}.db");
+    public Dictionary<string, string?> Overrides { get; } = [];
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
@@ -29,12 +30,13 @@ public class DemoFactory<T> : WebApplicationFactory<T> where T : class
         builder.UseSetting("Demo:Password", Password);
         builder.UseSetting("Services:ApiKey", ServiceKey);
         builder.UseSetting("Worker:Enabled", "false");
+        foreach (var (key, value) in Overrides) builder.UseSetting(key, value);
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string,string?>
         {
             ["Jwt:Key"] = Key, ["Demo:Password"] = Password, ["Services:ApiKey"] = ServiceKey,
             ["Worker:Enabled"] = "false", ["Services:CRM"] = "http://localhost:5101/",
             ["Services:ERP"] = "http://localhost:5102/", ["ConnectionStrings:Database"] = $"Data Source={path};Pooling=False"
-        }));
+        }).AddInMemoryCollection(Overrides));
     }
     protected override void Dispose(bool disposing)
     {
@@ -146,6 +148,49 @@ public class ApiTests
         Assert.Equal(5, responses.Count(r => r.StatusCode == HttpStatusCode.Conflict));
         using var scope = factory.Services.CreateScope();
         Assert.Equal(1, await scope.ServiceProvider.GetRequiredService<HubDb>().Executions.CountAsync());
+    }
+    [Fact]
+    public async Task CRM_outage_does_not_block_history_metrics_or_workloads()
+    {
+        using var factory = new DemoFactory<Hub.Program>();
+        // Port 9 (discard) has no listener: connection refused, the same as a stopped CRM container.
+        factory.Overrides["Services:CRM"] = "http://127.0.0.1:9/";
+        using var client = await Login(factory, "viewer");
+        var orders = await client.GetAsync("/api/orders");
+        Assert.Equal(HttpStatusCode.BadGateway, orders.StatusCode);
+        Assert.Equal("Mock CRM unavailable", (await orders.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("title").GetString());
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/metrics")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/executions?page=1")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/jobs")).StatusCode);
+    }
+    [Fact]
+    public async Task Creation_and_manual_retry_are_attributed_in_the_audit_trail()
+    {
+        using var factory = new DemoFactory<Hub.Program>();
+        using var client = await Login(factory);
+        var start = await client.PostAsJsonAsync("/api/executions", new { orderId = "ORD-004", scenario = "ServerError", failuresBeforeSuccess = 3 });
+        var id = (await start.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HubDb>();
+            var e = await db.Executions.SingleAsync();
+            e.Status = "Failed"; e.Attempts = 3; e.ErrorClass = "UpstreamUnavailable";
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsJsonAsync("/api/executions/" + id + "/retry", new { })).StatusCode);
+        var detail = await client.GetFromJsonAsync<JsonElement>("/api/executions/" + id);
+        var logs = detail.GetProperty("logs").EnumerateArray().ToArray();
+        Assert.Contains("operator (Operator)", logs[0].GetProperty("message").GetString());
+        Assert.Contains("ServerError", logs[0].GetProperty("message").GetString());
+        var retry = logs[^1];
+        Assert.Equal("ManualRetry", retry.GetProperty("stage").GetString());
+        var message = retry.GetProperty("message").GetString()!;
+        Assert.Contains("#1", message);
+        Assert.Contains("operator (Operator)", message);
+        Assert.Contains("UpstreamUnavailable on attempt 3", message);
+        Assert.Equal(0, detail.GetProperty("attempts").GetInt32());
+        Assert.Equal("Pending", detail.GetProperty("status").GetString());
+        Assert.DoesNotContain("Bearer", string.Join("", logs.Select(l => l.GetProperty("message").GetString())));
     }
     [Fact]
     public async Task Workloads_are_synthetic_and_filterable()

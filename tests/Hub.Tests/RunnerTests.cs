@@ -121,18 +121,36 @@ public sealed class FakeClients : HttpMessageHandler, IHttpClientFactory
     public bool InvalidOrder { get; set; }
     public bool MalformedJson { get; set; }
     public decimal Amount { get; set; } = 125.50m;
+    /// <summary>Simulates the worker process dying after CRM retrieval (an unclassified exception escapes the runner).</summary>
+    public bool CrashAfterCrm { get; set; }
+    /// <summary>Simulates the worker dying after ERP durably accepted the order but before the hub saved the receipt.</summary>
+    public bool CrashAfterErp { get; set; }
     public List<string> Payloads { get; } = [];
+    public int CrmCalls { get; private set; }
+    public int ErpOrdersCreated => accepted.Count;
+    private readonly Dictionary<string, string> accepted = [];
     public HttpClient CreateClient(string name) => new(this, false) { BaseAddress = new Uri("http://" + name.ToLowerInvariant() + "/") };
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         if (request.RequestUri!.Host == "crm")
         {
+            CrmCalls++;
+            if (CrashAfterCrm) throw new InvalidOperationException("simulated worker crash");
             if (MalformedJson) return new(HttpStatusCode.OK) { Content = new StringContent("{ invalid") };
-            return new(HttpStatusCode.OK) { Content = JsonContent.Create(new CrmOrder("ORD-001", "C-100", "USD", InvalidOrder ? -1 : Amount)) };
+            var orderId = Uri.UnescapeDataString(request.RequestUri.Segments[^1]);
+            return new(HttpStatusCode.OK) { Content = JsonContent.Create(new CrmOrder(orderId, "C-100", "USD", InvalidOrder ? -1 : Amount)) };
         }
-        Payloads.Add(await request.Content!.ReadAsStringAsync(ct));
+        var payload = await request.Content!.ReadAsStringAsync(ct);
+        Payloads.Add(payload);
         if (Timeout) throw new TaskCanceledException("simulated");
         if (Failures-- > 0) return new((HttpStatusCode)FailStatus);
-        return new(HttpStatusCode.Created) { Content = JsonContent.Create(new Receipt("ORD-001", "receipt-001", false)) };
+        // Idempotent like the mock ERP: the same order and payload return the original receipt.
+        var order = System.Text.Json.JsonSerializer.Deserialize<ErpOrder>(payload, System.Text.Json.JsonSerializerOptions.Web)!;
+        var duplicate = accepted.TryGetValue(order.ExternalOrderId, out var previous);
+        if (duplicate && previous != payload) return new(HttpStatusCode.Conflict);
+        accepted[order.ExternalOrderId] = payload;
+        if (CrashAfterErp) throw new InvalidOperationException("simulated worker crash");
+        return new(duplicate ? HttpStatusCode.OK : HttpStatusCode.Created)
+            { Content = JsonContent.Create(new Receipt(order.ExternalOrderId, "receipt-001", duplicate)) };
     }
 }

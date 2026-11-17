@@ -138,7 +138,7 @@ public partial class Program
             var execution = await db.Executions.AsNoTracking().Include(x => x.Logs.OrderBy(l => l.Id)).SingleOrDefaultAsync(x => x.Id == id);
             return execution is null ? Results.NotFound() : Results.Ok(execution);
         });
-        api.MapPost("/executions", async (StartExecution input, HubDb db) =>
+        api.MapPost("/executions", async (StartExecution input, ClaimsPrincipal user, HubDb db) =>
         {
             if (string.IsNullOrWhiteSpace(input.OrderId) || input.OrderId.Length > 60 ||
                 input.Environment is not ("DEV" or "TEST") || !Scenarios.All.Contains(input.Scenario) ||
@@ -149,7 +149,9 @@ public partial class Program
             if (existing is not null) return Results.Conflict(new { executionId = existing.Id, error = "Source order already tracked. Open its execution." });
             var execution = new Execution { OrderId = input.OrderId, Environment = input.Environment,
                 Scenario = input.Scenario, Target = input.Target, FailuresBeforeSuccess = input.FailuresBeforeSuccess };
-            execution.Logs.Add(new ExecutionLog { Stage = "Queued", Message = "Queued by authenticated demo operator." });
+            execution.Logs.Add(new ExecutionLog { Stage = "Queued", Message = $"Queued by {Actor(user)} in {input.Environment}. " +
+                (input.Scenario == "None" ? "No failure simulation." : $"Simulation {input.Scenario} on {execution.Target} for the first {input.FailuresBeforeSuccess} attempt(s).") +
+                $" Automatic retry budget: {IntegrationRunner.MaxAttempts} attempts." });
             db.Executions.Add(execution);
             try { await db.SaveChangesAsync(); }
             catch (DbUpdateException)
@@ -161,10 +163,12 @@ public partial class Program
             }
             return Results.Accepted($"/api/executions/{execution.Id}", new { execution.Id });
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
-        api.MapPost("/executions/{id}/retry", async (string id, HubDb db) =>
+        api.MapPost("/executions/{id}/retry", async (string id, ClaimsPrincipal user, HubDb db) =>
         {
             // Atomic state transition prevents double-clicks and concurrent operators from queuing twice.
             await using var tx = await db.Database.BeginTransactionAsync();
+            var before = await db.Executions.AsNoTracking().Where(x => x.Id == id)
+                .Select(x => new { x.ErrorClass, x.Attempts, x.RetryCount }).SingleOrDefaultAsync();
             var changed = await db.Executions.Where(x => x.Id == id && x.Status == "Failed")
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, "Pending")
                     .SetProperty(x => x.Scenario, "None").SetProperty(x => x.Attempts, 0)
@@ -176,7 +180,9 @@ public partial class Program
             if (changed == 0) return await db.Executions.AnyAsync(x => x.Id == id)
                 ? Results.Conflict(new { error = "Only failed executions can be retried." }) : Results.NotFound();
             db.Logs.Add(new ExecutionLog { ExecutionId = id, Stage = "ManualRetry",
-                Message = "Operator requested retry. Simulation cleared; original mapped payload and order ID retained." });
+                Message = $"Manual retry #{before!.RetryCount + 1} requested by {Actor(user)} after {before.ErrorClass ?? "failure"} " +
+                    $"on attempt {before.Attempts}. New cycle with a {IntegrationRunner.MaxAttempts}-attempt budget; simulation cleared; " +
+                    "original order ID and frozen mapped payload retained." });
             await db.SaveChangesAsync();
             await tx.CommitAsync();
             return Results.Accepted($"/api/executions/{id}", new { id });
@@ -206,6 +212,9 @@ public partial class Program
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
         await app.RunAsync();
     }
+    // Audit attribution uses only the fixed demo account name and role, never token contents.
+    private static string Actor(ClaimsPrincipal user) =>
+        $"{user.Identity?.Name ?? "unknown"} ({(user.IsInRole("Operator") ? "Operator" : "Viewer")})";
 }
 public record Login(string Username, string Password);
 public record StartExecution(string OrderId, string Environment = "DEV", string Scenario = "None",

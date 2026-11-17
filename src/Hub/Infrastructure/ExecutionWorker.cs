@@ -8,13 +8,12 @@ public sealed class ExecutionWorker(IServiceScopeFactory scopes, ILogger<Executi
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Crash recovery is safe because ERP retains a durable idempotency record.
+        // Crash recovery is safe because ERP retains a durable idempotency record; it still respects the retry budget.
         using (var recovery = scopes.CreateScope())
         {
-            var db = recovery.ServiceProvider.GetRequiredService<HubDb>();
-            await db.Executions.Where(x => x.Status == "Running")
-                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, "Retrying")
-                    .SetProperty(x => x.AvailableAt, DateTime.UtcNow), stoppingToken);
+            var recovered = await ExecutionRecovery.RecoverInterruptedAsync(
+                recovery.ServiceProvider.GetRequiredService<HubDb>(), stoppingToken);
+            if (recovered > 0) logger.LogWarning("Recovered {Count} interrupted executions", recovered);
         }
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -40,12 +39,7 @@ public sealed class ExecutionWorker(IServiceScopeFactory scopes, ILogger<Executi
                 catch (Exception ex)
                 {
                     logger.LogError("Worker failed for {ExecutionId} with {ErrorType}", tracked.Id, ex.GetType().Name);
-                    db.ChangeTracker.Clear();
-                    await db.Executions.Where(x => x.Id == item.Id).ExecuteUpdateAsync(s => s
-                        .SetProperty(x => x.Status, "Failed")
-                        .SetProperty(x => x.EndedAt, DateTime.UtcNow)
-                        .SetProperty(x => x.ErrorClass, "Internal")
-                        .SetProperty(x => x.Troubleshooting, "Inspect structured server logs using the execution ID."), stoppingToken);
+                    await ExecutionRecovery.FailUnexpectedAsync(db, item.Id, stoppingToken);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }

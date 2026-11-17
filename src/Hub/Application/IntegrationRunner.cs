@@ -12,10 +12,22 @@ public class IntegrationRunner(HubDb db, IHttpClientFactory clients, ILogger<Int
     public const int MaxAttempts = 3;
     public async Task ProcessAsync(Execution execution, CancellationToken ct)
     {
+        // Defence in depth: never start an attempt beyond the budget, whatever path re-queued the execution.
+        if (execution.Attempts >= MaxAttempts)
+        {
+            execution.Status = "Failed";
+            execution.ErrorClass ??= "RetryBudgetExhausted";
+            execution.Troubleshooting ??= "The automatic retry budget is exhausted. Investigate, then use an explicit operator retry.";
+            execution.StartedAt ??= DateTime.UtcNow;
+            Finish(execution);
+            await Log(execution, "RetryExhausted", $"Refused to start attempt {execution.Attempts + 1}; budget is {MaxAttempts} attempts per cycle.", ct, "Error");
+            return;
+        }
         execution.Attempts++;
         execution.StartedAt ??= DateTime.UtcNow;
         execution.Status = "Running";
-        await Log(execution, "Started", "Integration attempt started.", ct);
+        // Persisting the attempt number before any upstream call is what lets crash recovery count interrupted attempts.
+        await Log(execution, "Started", $"Attempt {execution.Attempts} of {MaxAttempts} started.", ct);
         try
         {
             using var crm = new HttpRequestMessage(HttpMethod.Get, $"api/orders/{Uri.EscapeDataString(execution.OrderId)}");
@@ -68,13 +80,19 @@ public class IntegrationRunner(HubDb db, IHttpClientFactory clients, ILogger<Int
                 execution.Status = "Retrying";
                 var delay = FailurePolicy.Backoff(execution.Attempts, (ex as UpstreamException)?.RetryAfter);
                 execution.AvailableAt = DateTime.UtcNow.Add(delay);
-                await Log(execution, "RetryScheduled", $"{failure.Classification}; retry in {delay.TotalSeconds:0} seconds.", ct, "Warning");
+                await Log(execution, "RetryScheduled", $"{failure.Classification} (transient); attempt {execution.Attempts + 1} of {MaxAttempts} in {delay.TotalSeconds:0} seconds.", ct, "Warning");
+            }
+            else if (failure.Transient)
+            {
+                execution.Status = "Failed";
+                Finish(execution);
+                await Log(execution, "RetryExhausted", $"{failure.Classification} (transient) persisted for all {MaxAttempts} attempts. {failure.Guidance}", ct, "Error");
             }
             else
             {
                 execution.Status = "Failed";
                 Finish(execution);
-                await Log(execution, "Failed", $"{failure.Classification}: {failure.Guidance}", ct, "Error");
+                await Log(execution, "Failed", $"{failure.Classification} (permanent, not retried automatically): {failure.Guidance}", ct, "Error");
             }
         }
     }
