@@ -65,6 +65,17 @@ public class ApiTests
             new { username = "operator", password = "invalid" })).StatusCode);
     }
     [Fact]
+    public async Task Login_is_rate_limited_by_default()
+    {
+        using var factory = new DemoFactory<Hub.Program>();
+        using var client = factory.CreateClient();
+        var statuses = new List<HttpStatusCode>();
+        for (var i = 0; i < 11; i++)
+            statuses.Add((await client.PostAsJsonAsync("/api/auth/login", new { username = "viewer", password = "invalid" })).StatusCode);
+        Assert.All(statuses.Take(10), s => Assert.Equal(HttpStatusCode.Unauthorized, s));
+        Assert.Equal(HttpStatusCode.TooManyRequests, statuses[10]);
+    }
+    [Fact]
     public async Task Viewer_can_monitor_but_cannot_run_or_retry()
     {
         using var factory = new DemoFactory<Hub.Program>();

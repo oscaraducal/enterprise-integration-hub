@@ -36,12 +36,14 @@ public partial class Program
             };
         });
         builder.Services.AddAuthorizationBuilder().AddPolicy("Operate", p => p.RequireRole("Operator"));
+        // Demo default: 10 logins/minute per address. CI browser tests raise it because every test signs in.
+        var loginLimit = Math.Clamp(builder.Configuration.GetValue("RateLimits:LoginPerMinute", 10), 1, 1000);
         builder.Services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = 429;
             options.AddPolicy("login", context => RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "local",
-                _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) }));
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = loginLimit, Window = TimeSpan.FromMinutes(1) }));
             options.AddFixedWindowLimiter("mutations", o => { o.PermitLimit = 60; o.Window = TimeSpan.FromMinutes(1); });
         });
         builder.Services.AddCors(o => o.AddDefaultPolicy(p => p

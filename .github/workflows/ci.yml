@@ -35,6 +35,9 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Start real APIs and run browser tests
         shell: bash
+        env:
+          # Every browser test signs in; the 10/minute demo login limit would reject later tests with 429.
+          RateLimits__LoginPerMinute: '300'
         run: |
           node scripts/setup.mjs
           set -a

@@ -12,10 +12,12 @@ html { @include mat.theme((color: (primary: mat.$azure-palette), typography: (pl
 @media(max-width:800px){.sidebar{position:static;width:auto;padding:18px}.app-shell{display:block}.sidebar .brand{font-size:13px}.sidebar .brand br,.sidebar-bottom,.workspace-label{display:none}.sidebar nav{display:flex;margin-top:15px}.sidebar nav button{flex:1;padding:10px}.workspace{margin-left:0}.topbar{padding:0 18px;height:60px}.topbar>span,.role{display:none}.topbar>div{width:100%;justify-content:space-between}.content{padding:20px 14px}h1{font-size:24px}.metrics{grid-template-columns:repeat(2,1fr)}.metrics .metric:last-child{grid-column:1/-1}.metric strong{font-size:28px}.detail-grid{grid-template-columns:1fr;gap:10px}.page-heading{align-items:start}.legend{gap:6px}.legend>div{font-size:9px}.run-form{display:grid;grid-template-columns:1fr 1fr}.run-form label:first-child{grid-column:1/-1;min-width:0}.run-form button{grid-column:1/-1}.login-page{grid-template-columns:1fr;padding:30px 20px;gap:35px}.login-story .brand{margin-bottom:30px}.login-story h1{font-size:38px}.login-form{max-width:none;padding:26px}.flow-preview{gap:8px}.flow-preview span{padding:10px}.job-actions{flex-wrap:wrap}footer{display:block}footer span{display:block;margin-top:5px}}
 
 // ---- Accessibility, resilience and responsive refinements ----
+// position:relative keeps absolutely positioned sr-only labels (caption, "Actions" header) inside the scroll clip;
+// without it they escape the container and widen the page on phones.
 .mat-mdc-button-base{font-family:$font-stack;letter-spacing:normal;white-space:nowrap}
 :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 nav button:focus-visible{outline-color:#8bb4ff}
-.table-scroll{max-width:100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;border-radius:0 0 4px 4px}
+.table-scroll{position:relative;max-width:100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;border-radius:0 0 4px 4px}
 .table-scroll:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
 .panel{min-width:0}
 .refresh-button{flex-shrink:0;white-space:nowrap}
