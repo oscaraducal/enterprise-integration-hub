@@ -8,6 +8,8 @@ public class HubDb(DbContextOptions<HubDb> options) : DbContext(options)
     public DbSet<ExecutionLog> Logs => Set<ExecutionLog>();
     public DbSet<JobRun> Jobs => Set<JobRun>();
     public DbSet<MappingDefinition> MappingDefinitions => Set<MappingDefinition>();
+    public DbSet<FlowDesign> FlowDesigns => Set<FlowDesign>();
+    public DbSet<FlowVersion> FlowVersions => Set<FlowVersion>();
     protected override void ConfigureConventions(ModelConfigurationBuilder configuration)
         => configuration.Properties<DateTime>().HaveConversion<Integration.Shared.UtcDateTimeConverter>();
     protected override void OnModelCreating(ModelBuilder model)
@@ -21,6 +23,9 @@ public class HubDb(DbContextOptions<HubDb> options) : DbContext(options)
         model.Entity<Execution>().HasIndex(x => new { x.Kind, x.SourceId }).IsUnique()
             .HasDatabaseName(ActiveSyncIndex).HasFilter(ActiveSyncFilter);
         model.Entity<MappingDefinition>().HasIndex(x => new { x.Name, x.Version }).IsUnique();
+        model.Entity<FlowDesign>().HasKey(x => x.Name);
+        model.Entity<FlowDesign>().Property(x => x.DraftRevision).IsConcurrencyToken();
+        model.Entity<FlowVersion>().HasIndex(x => new { x.FlowName, x.Version }).IsUnique();
     }
     public const string ActiveSyncIndex = "IX_Executions_ActiveCustomerSync";
     public const string ActiveSyncFilter = "\"Kind\" = 'CustomerSync' AND \"Status\" IN ('Pending', 'Running', 'Retrying')";
@@ -47,5 +52,20 @@ public class HubDb(DbContextOptions<HubDb> options) : DbContext(options)
             """);
         await Integration.Shared.SchemaUpgrade.ExecuteAsync(db,
             "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_MappingDefinitions_Name_Version\" ON \"MappingDefinitions\" (\"Name\", \"Version\")");
+        // Milestone C: flow designs (editable draft) and immutable published versions (additive).
+        await Integration.Shared.SchemaUpgrade.ExecuteAsync(db, """
+            CREATE TABLE IF NOT EXISTS "FlowDesigns" (
+                "Name" TEXT NOT NULL CONSTRAINT "PK_FlowDesigns" PRIMARY KEY, "Title" TEXT NOT NULL, "Description" TEXT NULL,
+                "DraftJson" TEXT NOT NULL, "DraftRevision" INTEGER NOT NULL, "DraftUpdatedAt" TEXT NOT NULL, "DraftUpdatedBy" TEXT NOT NULL,
+                "CreatedAt" TEXT NOT NULL, "CreatedBy" TEXT NOT NULL)
+            """);
+        await Integration.Shared.SchemaUpgrade.ExecuteAsync(db, """
+            CREATE TABLE IF NOT EXISTS "FlowVersions" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_FlowVersions" PRIMARY KEY AUTOINCREMENT, "FlowName" TEXT NOT NULL, "Version" INTEGER NOT NULL,
+                "Title" TEXT NOT NULL, "Description" TEXT NULL, "DefinitionJson" TEXT NOT NULL, "NodeCount" INTEGER NOT NULL,
+                "PublishedAt" TEXT NOT NULL, "PublishedBy" TEXT NOT NULL)
+            """);
+        await Integration.Shared.SchemaUpgrade.ExecuteAsync(db,
+            "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_FlowVersions_FlowName_Version\" ON \"FlowVersions\" (\"FlowName\", \"Version\")");
     }
 }

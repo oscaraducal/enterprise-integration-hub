@@ -243,6 +243,7 @@ public partial class Program
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
         api.MapPortfolioLab();
         api.MapDataCatalog();
+        api.MapFlowDesigner();
         await app.RunAsync();
     }
     private static async Task<string?> ActiveSync(HubDb db, string sourceId) =>
