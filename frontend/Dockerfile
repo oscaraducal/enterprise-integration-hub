@@ -6,5 +6,6 @@ COPY . .
 RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.28-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY security-headers.inc /etc/nginx/conf.d/security-headers.inc
 COPY --from=build /app/dist/dashboard/browser /usr/share/nginx/html
 EXPOSE 8080

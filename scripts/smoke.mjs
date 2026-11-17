@@ -15,6 +15,18 @@ await waitUntil(async () => (await fetch('http://localhost:5100/health')).ok);
 await waitUntil(async () => (await fetch('http://localhost:5101/health')).ok);
 await waitUntil(async () => (await fetch('http://localhost:5102/health')).ok);
 await waitUntil(async () => (await fetch('http://localhost:4200/')).ok);
+// The app shell and deep links are revalidated on every load (no stale UI after a rebuild); hashed bundles are immutable.
+for (const path of ['/', '/workbench/integrations', '/crm/customers']) {
+  const page = await fetch('http://localhost:4200' + path);
+  assert.equal(page.status, 200, 'SPA route ' + path);
+  assert.match(page.headers.get('cache-control') ?? '', /no-cache/, 'index.html revalidated for ' + path);
+  assert.equal(page.headers.get('x-frame-options'), 'DENY', 'security headers kept for ' + path);
+  const bundle = (await page.text()).match(/main-[A-Z0-9]{8}\.js/)?.[0];
+  assert.ok(bundle, 'index.html references the hashed main bundle');
+  const js = await fetch('http://localhost:4200/' + bundle);
+  assert.match(js.headers.get('cache-control') ?? '', /immutable/, 'hashed bundle cached immutably');
+  assert.equal(js.headers.get('x-content-type-options'), 'nosniff');
+}
 const login = await fetch('http://localhost:4200/api/auth/login', {
   method:'POST', headers:{'Content-Type':'application/json'},
   body:JSON.stringify({username:'operator', password:config.DEMO_PASSWORD})
