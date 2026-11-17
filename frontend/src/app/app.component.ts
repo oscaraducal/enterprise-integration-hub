@@ -272,5 +272,9 @@ export class AppComponent implements OnDestroy {
   count(status: string) { return this.metrics().statuses.find(s => s.status === status)?.count ?? 0; }
   percent(status: string) { return this.metrics().total ? this.count(status) / this.metrics().total * 100 : 0; }
   private reportError(e: unknown) { if (!(e instanceof SessionEnded)) this.error.set(this.message(e)); }
-  private message(e: unknown) { return e instanceof Error ? e.message : 'Unable to reach the simulator.'; }
+  /** Messages are shown inline after a label, so make each read as a sentence ("Mock CRM unavailable."). */
+  private message(e: unknown) {
+    const text = (e instanceof Error ? e.message : 'Unable to reach the simulator.').trim();
+    return /[.!?)]$/.test(text) ? text : text + '.';
+  }
 }

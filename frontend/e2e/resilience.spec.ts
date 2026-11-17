@@ -39,7 +39,7 @@ test.describe('partial upstream outage', () => {
     await expect(source.locator('option').first()).toHaveText(/ORD-001/); // last good data preserved
     await expect(page.getByRole('heading', { name: 'Recent executions' })).toBeVisible();
     await expect(page.getByRole('region', { name: /Execution history table/ })).toBeVisible();
-    await page.screenshot({ path: 'test-results/crm-outage-warning.png', fullPage: true });
+    await page.screenshot({ path: 'test-results/crm-outage-warning.png' });
     await page.unroute('**/api/orders');
     await page.getByRole('button', { name: 'Refresh' }).click();
     await expect(warning).toHaveCount(0);
@@ -170,7 +170,7 @@ test.describe('responsive layout and accessibility', () => {
         expect(font).toContain('sans-serif'); // never the browser's default serif face
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-      await page.screenshot({ path: `test-results/dashboard-${name}.png`, fullPage: true });
+      await page.screenshot({ path: `test-results/layout-${name}.png`, fullPage: true });
       await page.getByRole('button', { name: 'Executions', exact: true }).click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     });

@@ -22,6 +22,7 @@ test('order travels through real mock APIs and shows a receipt and timeline', as
   await expect(page.locator('tbody tr')).toHaveCount(1);
 });
 test('transient failure retries then succeeds', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await login(page);
   await page.getByLabel('Source order').selectOption('ORD-002');
   await page.getByLabel('Scenario', { exact: true }).selectOption('Unavailable');
@@ -29,14 +30,21 @@ test('transient failure retries then succeeds', async ({ page }) => {
   const panel = page.getByRole('region', { name: 'Execution investigation' });
   await expect(panel.locator('.pill')).toHaveText('Completed', { timeout: 25000 });
   await expect(panel.getByText('RetryScheduled')).toBeVisible();
+  // README screenshots: real services, synthetic data. Element and viewport shots avoid fixed-sidebar clipping.
+  await panel.screenshot({ path: 'test-results/readme-execution-timeline.png' });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: 'test-results/readme-dashboard.png' });
 });
 test('permanent failure can be safely retried and duplicate submission rejected', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await login(page);
   await page.getByLabel('Source order').selectOption('ORD-003');
   await page.getByLabel('Scenario', { exact: true }).selectOption('BadRequest');
   await page.getByRole('button', { name: 'Run integration' }).click();
   const panel = page.getByRole('region', { name: 'Execution investigation' });
   await expect(panel.locator('.pill')).toHaveText('Failed', { timeout: 20000 });
+  await expect(panel.getByText('InvalidRequest', { exact: true })).toBeVisible();
+  await panel.screenshot({ path: 'test-results/readme-failed-investigation.png' });
   await page.getByRole('button', { name: 'Safely retry execution' }).click();
   await expect(panel.locator('.pill')).toHaveText('Completed', { timeout: 20000 });
   await page.getByRole('button', { name: 'Run integration' }).click();
