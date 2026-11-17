@@ -210,3 +210,19 @@ Designs are configuration: no route below executes a flow or calls a target syst
 | POST | /api/flows/import | Operator | `{ document, name? }`. Always creates a new draft; 409 if the name exists |
 
 Limits: 150 actions, 6 nesting levels, 256 KB per definition, 500-character expressions. See [docs/designer](docs/designer/README.md).
+
+## Connections and integration styles (Milestone C.1)
+
+| Method | Hub route | Role | Notes |
+|---|---|---|---|
+| GET | /api/connections/applications | Viewer/Operator | The approved internal applications with their adapter, supported roles, security summary and reasons for unsupported roles. No URLs or keys |
+| GET | /api/connections/applications/{app}/operations | Viewer/Operator | Discovered operations with method, path, request/response schema and parameters (503 if a catalog is unreachable) |
+| POST | /api/connections/applications/{app}/test | Operator | Safe test before saving (health and catalog metadata reads only) |
+| GET | /api/connections · /api/connections/{id} | Viewer/Operator | Connections; detail includes the integrations that use it |
+| GET | /api/connections/{id}/operations | Viewer/Operator | Operations of a saved connection |
+| POST | /api/connections | Operator | `{ identifier, name, description?, adapter: "REST", role: "Trigger"\|"Invoke"\|"TriggerAndInvoke", application }`. The role must be supported by the application |
+| PUT | /api/connections/{id} | Operator | `{ name, description?, role?, revision }`. A role change is refused (409) while the connection is used |
+| DELETE | /api/connections/{id} | Operator | Refused (409, with usage) while any draft or published version references it |
+| POST | /api/connections/{id}/test | Operator | Safe test; stores the status (Configured or Failed) |
+
+`POST /api/flows` also accepts `{ title, identifier, versionLabel, style: "application"|"schedule"|"manual", description?, tags?, template? }`. New integrations are blank (only the Start trigger) unless a starter template is chosen, and templates require `manual`. The earlier `{ name, title, template }` shape still works. Flow list, detail and export include `style`, `identifier`, `versionLabel` and `tags`. See [docs/designer/WORKBENCH.md](docs/designer/WORKBENCH.md).

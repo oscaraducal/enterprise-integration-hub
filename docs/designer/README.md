@@ -1,5 +1,7 @@
 # Integration Designer (Milestone C)
 
+> **Milestone C.1 update:** integrations now start from a New Integration wizard with a blank canvas. There are reusable Connections, endpoint wizards, mapping points, an inline + picker, and Vertical, Horizontal and Outline layouts. See [WORKBENCH.md](WORKBENCH.md).
+
 An original visual workbench for designing integration flows between the fictional **Legacy CRM** and **Modern ERP**. It borrows widely used orchestration ideas: a trigger, invoke, assign, map, branching, loops, scopes with fault handlers, staged files and versioned designs. The interface, code and names are the portfolio's own. It is **not** Oracle Integration Cloud, not a vendor replacement and not a visual clone.
 
 > **Milestone C designs, validates and versions flows. Nothing executes yet.** The Execution tab says so. Milestone D adds a bounded executor for the core actions, using only the synthetic CRM and ERP APIs.

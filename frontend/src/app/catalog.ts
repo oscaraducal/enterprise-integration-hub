@@ -107,8 +107,8 @@ export const SCENARIOS: ScenarioDef[] = [
       'Versions shows v1; editing the draft afterwards never changes v1.', 'Executions shows no new run: designing never calls the ERP.'],
     doc: DESIGNER_DOC,
     steps: [
-      { text: 'Open the Integration Designer and click + New flow (Operator).', go: { view: 'Integration Designer' }, label: 'Open Designer' },
-      { text: 'Name it customer-sync and start from "Legacy CRM customer → Modern ERP customer". Create it.', detail: 'Templates are created only on request; nothing is seeded.' },
+      { text: 'Open the Integration Designer and click + New integration (Operator).', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'Choose Manual practice, name it "Customer Sync" (identifier CUSTOMER_SYNC), then pick the starter template "Legacy CRM customer → Modern ERP customer".', detail: 'Blank is the default; templates are an explicit, optional choice.' },
       { text: 'Select readCustomer. It is an Invoke: crm.customers, operation get, key $trigger.customerId. Only list and get exist for the CRM.' },
       { text: 'Select checkEmail. Its case "Email missing" holds a Throw New Fault; Otherwise continues.' },
       { text: 'Select mapCustomer and click Open field mapper. Remove contactNumber, then drag phone onto contactNumber. Click Preview to see real CRM values transformed, then Apply.' },
@@ -129,7 +129,7 @@ export const SCENARIOS: ScenarioDef[] = [
     verify: ['Changing the file name to ../secret.xml shows "Paths are not allowed".', 'Undo restores it and the flow is valid again.'],
     doc: DESIGNER_DOC,
     steps: [
-      { text: 'Create a flow from "Legacy CRM order → staged XML file".', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'New integration → Manual practice → starter template "Legacy CRM order → staged XML file".', go: { view: 'Integration Designer' }, label: 'Open Designer' },
       { text: 'Select writeOrderXml: operation Write file, format xml, root SalesOrders, record SalesOrder, data $mapOrder.' },
       { text: 'Change the file name to ../secret.xml and read the problem; press Undo (Ctrl+Z).' },
       { text: 'Open the Stage File operation list: planned operations are visible but disabled.' },
@@ -149,12 +149,35 @@ export const SCENARIOS: ScenarioDef[] = [
     verify: ['Referencing $order after the loop shows "unknown variable $order".', 'Re-throw Fault outside a handler is an error; inside a Scope fault handler it is valid.'],
     doc: DESIGNER_DOC,
     steps: [
-      { text: 'Create a flow from "Review CRM orders (loop and branch)".', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'New integration → Manual practice → starter template "Review CRM orders (loop and branch)".', go: { view: 'Integration Designer' }, label: 'Open Designer' },
       { text: 'Collapse eachOrder to see "3 inside", expand it again, and search for logUnsupported.' },
       { text: 'Select logSummary and set its message to $order.id: the Problems tab reports the out-of-scope variable. Undo.' },
       { text: 'Drag a Scope into the main flow, then drag a Throw New Fault into its body and a Re-throw Fault into its fault handler.' },
       { text: 'Drag another Re-throw Fault into the main flow: it is reported as invalid outside a handler. Delete it.' },
       { text: 'Open the expression builder (ƒx) on a Logger, insert $order.currency and a function, then Check syntax.' },
+    ]
+  },
+  {
+    id: 'DSN-004', title: 'Build an Application integration from a blank canvas', status: 'Design only',
+    source: 'Hub REST trigger + Legacy CRM connection', target: 'Modern ERP connection (customer_master)',
+    businessCase: 'An application calls the Hub to synchronize one customer. Practise the full authoring path: connections, trigger, invokes and mapping points.',
+    objective: 'Create connections, start from a genuinely empty canvas, configure the REST trigger, add invokes with +, map the request contract and review it in all three layouts.',
+    requirements: ['Connections only point at approved internal applications; the Hub resolves addresses and keys.',
+      'Invokes are configured with an endpoint wizard and only offer operations the application supports.',
+      'A body operation gets an unconfigured request mapping directly before it; changing the operation never deletes rules.'],
+    fields: [['$trigger.customerId', 'GET /customers/{customerId} key'], ['$readCustomer.*', 'request mapping → customer_master'], ['customer_master', 'PUT /customer_master/{accountCode}']],
+    samples: ['Connections: LEGACY_CRM_REST, MODERN_ERP_REST (Invoke), HUB_REST_TRIGGER (Trigger)', 'Trigger: POST /accounts/{customerId}'],
+    verify: ['A new Application integration shows only Start and +.', 'The request mapping is listed as Unconfigured in Outline until fields are mapped.',
+      'Switching layouts never marks the draft as changed.'],
+    doc: DESIGNER_DOC,
+    steps: [
+      { text: 'In Connections, create LEGACY_CRM_REST and MODERN_ERP_REST (role Invoke) and HUB_REST_TRIGGER (role Trigger, Integration Hub REST trigger). Test each one.', go: { view: 'Connections' }, label: 'Connections' },
+      { text: 'In the Designer: + New integration → Application → name "Account Sync" → Create. Only the Start trigger is on the canvas.', go: { view: 'Integration Designer' }, label: 'Open Designer' },
+      { text: 'Click Configure trigger…: choose HUB_REST_TRIGGER, POST /accounts/{customerId}, request crm.customers, response erp.customer_master.' },
+      { text: 'Click + below Start → Connections / Invokes → Invoke Legacy CRM REST → GET /customers/{customerId} with key $trigger.customerId.' },
+      { text: 'Click + below it → Invoke Modern ERP REST → PUT /customer_master/{accountCode}. A request mapping appears before the Invoke; set its source and open the field mapper.' },
+      { text: 'Edit the ERP endpoint to a GET operation and read the impact dialog: the mapping is kept and flagged, never deleted. Undo to restore.' },
+      { text: 'Switch between Vertical, Horizontal and Outline. Outline shows connection, operation, schema, mapping status and validation per action.' },
     ]
   }
 ];
@@ -172,6 +195,8 @@ export const GLOSSARY: [string, string][] = [
   ['Orchestration flow', 'An ordered set of actions (invoke, assign, map, branch, loop…) designed in the Integration Designer.'],
   ['Draft and published version', 'The draft is editable; publishing a valid draft stores an immutable numbered version.'],
   ['Expression', 'A safe formula such as concat($a, \'-\', upper($b)). It is parsed and checked, never executed as code.'],
+  ['Connection', 'A reusable, tested link to an approved internal application with a role (Trigger or Invoke). The Hub keeps its address and credentials.'],
+  ['Mapping point', 'Where a mapping belongs: before an Invoke\'s request, after its response, before Return for a trigger response, or before a Stage File write.'],
 ];
 
 /** The integration pipeline shown across the lab. */
