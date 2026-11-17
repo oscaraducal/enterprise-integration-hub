@@ -242,6 +242,7 @@ public partial class Program
             return Results.Created($"/api/jobs/{job.Id}", job);
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
         api.MapPortfolioLab();
+        api.MapDataCatalog();
         await app.RunAsync();
     }
     private static async Task<string?> ActiveSync(HubDb db, string sourceId) =>

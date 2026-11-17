@@ -123,7 +123,7 @@ public static class PortfolioEndpoints
         Results.Problem(statusCode: 502, title: system == "CRM" ? "Mock CRM unavailable" : "Modern ERP unavailable");
 
     /// <summary>Forwards to a fixed upstream route and relays its status and JSON body (validation errors included).</summary>
-    private static async Task<IResult> Forward(IHttpClientFactory factory, string system, HttpMethod method, string path,
+    internal static async Task<IResult> Forward(IHttpClientFactory factory, string system, HttpMethod method, string path,
         object? body, CancellationToken ct, string? actor = null)
     {
         try
@@ -135,6 +135,7 @@ public static class PortfolioEndpoints
             // Never relay upstream authentication failures as if they were the user's.
             if (status is 401 or 403) return Results.Problem(statusCode: 502, title: "Upstream service authentication failed");
             if (status >= 500) return Unavailable(system);
+            if (status == 204) return Results.NoContent();
             var text = await response.Content.ReadAsStringAsync(ct);
             return Results.Content(text.Length == 0 ? "{}" : text,
                 response.Content.Headers.ContentType?.MediaType ?? "application/json", statusCode: status);

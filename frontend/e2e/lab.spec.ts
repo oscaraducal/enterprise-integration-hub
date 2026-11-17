@@ -179,8 +179,8 @@ test('Legacy CRM and Modern ERP are dashboard-based applications with tables, sc
   await expect(dialog(page, 'Import history entry')).toContainText('C-300');
   await page.keyboard.press('Escape');
   await appNav(page, 'Modern ERP', 'Data Tables');
-  await page.getByRole('button', { name: /customer_history/ }).click();
-  await expect(page.getByRole('region', { name: 'Schema of customer_history' })).toContainText('changedFields');
+  await page.getByRole('button', { name: /imported_orders/ }).click();
+  await expect(page.getByRole('region', { name: 'Schema of imported_orders' })).toContainText('totalMinorUnits');
 });
 
 test('Mapping Studio previews without side effects and explains validation errors', async ({ page }) => {

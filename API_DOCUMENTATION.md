@@ -167,3 +167,26 @@ Customer JSON: `{ "customerId", "customerName", "email", "phone", "status", "ver
 | GET | /api/history?take= | Customer-master history across all accounts, newest first (`take` clamped to 1–200, default 100) |
 
 New error classes: `MissingCustomer` (422 UnknownAccount), `TargetRejected` (other 422). Both are permanent; see the [scenario docs](docs/scenarios/README.md).
+
+## Dynamic Data Catalog and schema mapper (Milestone B)
+
+Every route below is behind the Integration Hub's JWT authentication. `{system}` is the fixed allowlist `crm` | `erp`; the Hub forwards to that application's `/api/catalog` routes with the service key, which never reaches the browser.
+
+| Method | Hub route | Role | Notes |
+|---|---|---|---|
+| GET | /api/catalog/{system}/tables | Viewer/Operator | Built-in tables (read-only, `builtIn: true`) and logical tables, with columns, types, required flags, primary key, schema version and row count |
+| GET | /api/catalog/{system}/tables/{name} | Viewer/Operator | `{ table, versions[] }`: metadata plus the schema version history |
+| GET | /api/catalog/{system}/tables/{name}/contract | Viewer/Operator | Generated REST contract: routes and a JSON-schema description of a record |
+| POST | /api/catalog/{system}/tables | Operator | Create a logical table `{ name, title, description?, primaryKey, columns[{ name, type, required?, values? }] }`. Types: string, integer, decimal, boolean, date, datetime, enum. Names are validated (`^[a-z][a-z0-9_]{1,39}$`); built-in names are reserved |
+| POST | /api/catalog/{system}/tables/{name}/schema | Operator | Approved operations only: `AddColumn` (optional when rows exist), `RemoveColumn` (409 `ColumnInUse` while any row has a value), `SetRequired` (409 `RequiresBackfill` while rows lack a value), `AddEnumValues`, `UpdateDetails`. Each change adds a schema version. No type changes or renames |
+| DELETE | /api/catalog/{system}/tables/{name} | Operator | Only empty tables (409 `TableNotEmpty` otherwise) |
+| GET | /api/catalog/{system}/tables/{name}/records?page=&pageSize=&search= | Viewer/Operator | Paginated (max 100 per page), text search up to 60 characters |
+| GET / PUT / DELETE | /api/catalog/{system}/tables/{name}/records/{key} | read Viewer · write Operator | The key cannot change on PUT |
+| POST | /api/catalog/{system}/tables/{name}/records | Operator | Validated against the schema: unknown fields, missing required values and wrong types are 400 per field; duplicate key 409; at most 500 rows per table and 8 KB per row |
+| POST | /api/mapping-designer/suggest | Viewer/Operator | `{ source: { system, table }, target: { system, table } }` → both table definitions plus a suggested rule per mappable target field (name, synonym, type and primary-key matching) with confidence and reasons |
+| POST | /api/mapping-designer/validate | Viewer/Operator | Validates a draft `{ name, source, target, fields[{ target, transform, source?, sources?, value?, separator?, factor?, format?, lookup? }] }` |
+| POST | /api/mapping-designer/preview | Viewer/Operator | `{ draft, sample }` → mapped output for one sample record. Pure: no writes and no target call |
+| GET | /api/mapping-definitions · /api/mapping-definitions/{name} | Viewer/Operator | Latest version per name, or every version of one mapping |
+| POST | /api/mapping-definitions | Operator | Re-validates on the server, then stores a new immutable version (400 with the report when invalid). Saved definitions are configuration only and are **not executed** in Milestone B |
+
+Allowlisted transformations: Copy, Trim, Uppercase, Lowercase, Concatenate, Default, ToNumber, Multiply, Divide, FormatDate (fixed format list), Lookup. Nothing is evaluated as code or SQL.

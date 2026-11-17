@@ -4,13 +4,19 @@ import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { Api, ApiError, Focus, SessionEnded, errorText } from './api';
 import { CrmCustomer, CrmOrder, MappingSpec, PreviewResult } from './models';
+import { SchemaMapperComponent } from './schema-mapper.component';
 
 type MapKind = 'customer' | 'sales-order';
 
 /** Source fields left, transformation rules in the middle, target fields right. Preview never writes or calls the target. */
 @Component({
-  selector: 'app-mapping', standalone: true, imports: [CommonModule, FormsModule, MatButtonModule],
+  selector: 'app-mapping', standalone: true, imports: [CommonModule, FormsModule, MatButtonModule, SchemaMapperComponent],
   template: `
+  <div class="tabs studio-tabs" role="tablist" aria-label="Mapping Studio mode">
+    <button role="tab" [attr.aria-selected]="mode() === 'scenario'" [class.active]="mode() === 'scenario'" (click)="mode.set('scenario')">Scenario mappings (SCN-001…003)</button>
+    <button role="tab" [attr.aria-selected]="mode() === 'schema'" [class.active]="mode() === 'schema'" (click)="mode.set('schema')">Schema mapper (Data Catalog)</button>
+  </div>
+  @if (mode() === 'schema') { <app-schema-mapper [api]="api"></app-schema-mapper> } @else {
   <section class="panel mapper-controls">
     <div class="section-heading"><div><h2>Choose a mapping and a source record</h2><p class="hint">Rules come from the middleware's C# mapping, the same code the integration runs. Preview is read-only: it creates no execution, writes nothing and never calls the Modern ERP.</p></div></div>
     <div class="mapper-pickers">
@@ -52,12 +58,15 @@ type MapKind = 'customer' | 'sales-order';
         @for (e of r.errors; track e.field + e.message) { <p class="inline-warning flat"><b>{{e.field}}</b>: {{e.message}}</p> }
         @for (n of r.notes; track n) { <p class="hint">{{n}}</p> }
       }</div>
-  </section>`
+  </section>
+  }`
 })
 export class MappingComponent implements OnInit, OnChanges {
   @Input({ required: true }) api!: Api;
   @Input() focus: Focus | null = null;
   @Output() inspect = new EventEmitter<string>();
+  /** Scenario mappings are the C# rules the running integrations use; the schema mapper builds new, versioned definitions. */
+  mode = signal<'scenario' | 'schema'>('scenario');
   kind = signal<MapKind>('customer');
   specs = signal<{ customer: MappingSpec; salesOrder: MappingSpec } | null>(null);
   spec = signal<MappingSpec | null>(null);
@@ -79,6 +88,7 @@ export class MappingComponent implements OnInit, OnChanges {
   ngOnChanges(changes: SimpleChanges) { if (changes['focus'] && !changes['focus'].firstChange && this.specs()) this.applyFocus(); }
   private applyFocus() {
     const f = this.focus; if (!f?.id) return;
+    this.mode.set('scenario');
     this.setKind(f.kind === 'order' ? 'sales-order' : 'customer', f.id);
     void this.preview();
   }

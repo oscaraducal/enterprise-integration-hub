@@ -20,6 +20,7 @@ public partial class Program
         app.UseDemoDefaults();
         using (var scope = app.Services.CreateScope())
             await ErpDb.InitializeAsync(scope.ServiceProvider.GetRequiredService<ErpDb>());
+        app.MapCatalog(BuiltInTables);
 
         // ----- Imported sales orders -----
         app.MapGet("/api/orders", async (ErpDb db) => await db.Accepted.AsNoTracking().OrderByDescending(x => x.AcceptedAt).ToListAsync());
@@ -116,6 +117,24 @@ public partial class Program
         await app.RunAsync();
     }
 
+    /// <summary>The ERP's code-defined tables, published in the Data Catalog for schema discovery (read-only there).</summary>
+    public static readonly BuiltInTable<ErpDb>[] BuiltInTables =
+    [
+        new(new TableView("customer_master", "Customer master", "ERP accounts. Imported records are owned by the integration; migrated fixtures are synthetic.", "accountCode",
+            [new("accountCode", "string", true), new("displayName", "string", true), new("emailAddress", "string", true),
+             new("contactNumber", "string"), new("accountStatus", "enum", true, AccountStatuses.All),
+             new("origin", "enum", true, ["Fixture", "Import"], ReadOnly: true), new("sourceSystem", "string", ReadOnly: true),
+             new("sourceReference", "string", Description: "Source record ID", ReadOnly: true), new("sourceVersion", "integer", Description: "Highest applied source version", ReadOnly: true),
+             new("lastExecutionId", "string", ReadOnly: true), new("lastSyncedAt", "datetime", ReadOnly: true),
+             new("createdAt", "datetime", true, ReadOnly: true), new("updatedAt", "datetime", true, ReadOnly: true)], 1, true, null, null),
+            "/api/customers", (db, ct) => db.Customers.CountAsync(ct)),
+        new(new TableView("imported_orders", "Imported sales orders", "Mapped orders accepted exactly once, with the receipt and the delivering execution.", "externalOrderId",
+            [new("externalOrderId", "string", true, Description: "Source order ID"), new("accountCode", "string", true),
+             new("currencyCode", "string", true), new("totalMinorUnits", "integer", true, Description: "e.g. 41025 = 410.25"),
+             new("receiptId", "string", true, ReadOnly: true), new("executionId", "string", ReadOnly: true),
+             new("sourceSystem", "string", ReadOnly: true), new("acceptedAt", "datetime", true, ReadOnly: true)], 1, true, null, null),
+            "/api/orders", (db, ct) => db.Accepted.CountAsync(ct)),
+    ];
     private static async Task<CustomerSyncResult> Upsert(ErpDb db, ErpCustomer input, int? version, string? executionId, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
@@ -245,8 +264,11 @@ public class CustomerHistory
     public string Actor { get; set; } = "";
     public DateTime At { get; set; }
 }
-public class ErpDb(DbContextOptions<ErpDb> options) : DbContext(options)
+public class ErpDb(DbContextOptions<ErpDb> options) : DbContext(options), ICatalogDb
 {
+    public DbSet<CatalogTable> CatalogTables => Set<CatalogTable>();
+    public DbSet<CatalogTableVersion> CatalogTableVersions => Set<CatalogTableVersion>();
+    public DbSet<CatalogRecord> CatalogRecords => Set<CatalogRecord>();
     public DbSet<AcceptedOrder> Accepted => Set<AcceptedOrder>();
     public DbSet<ErpCustomerRecord> Customers => Set<ErpCustomerRecord>();
     public DbSet<CustomerHistory> History => Set<CustomerHistory>();
@@ -257,6 +279,7 @@ public class ErpDb(DbContextOptions<ErpDb> options) : DbContext(options)
         model.Entity<AcceptedOrder>().HasKey(x => x.ExternalOrderId);
         model.Entity<ErpCustomerRecord>().ToTable("ErpCustomers").HasKey(x => x.AccountCode);
         model.Entity<CustomerHistory>().ToTable("CustomerHistory").HasIndex(x => x.AccountCode);
+        CatalogModel.Configure(model);
     }
     public static async Task InitializeAsync(ErpDb db)
     {
@@ -279,6 +302,7 @@ public class ErpDb(DbContextOptions<ErpDb> options) : DbContext(options)
                 "Actor" TEXT NOT NULL, "At" TEXT NOT NULL)
             """);
         await SchemaUpgrade.ExecuteAsync(db, """CREATE INDEX IF NOT EXISTS "IX_CustomerHistory_AccountCode" ON "CustomerHistory" ("AccountCode")""");
+        await CatalogModel.EnsureSchemaAsync(db);
         // Synthetic "migrated at go-live" fixtures so existing order demos keep working before any customer sync.
         var now = DateTime.UtcNow;
         foreach (var (code, name, email) in new[] { ("C-100", "Northstar Demo Labs", "ap@northstar-demo.example"),

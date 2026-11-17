@@ -7,6 +7,7 @@ public class HubDb(DbContextOptions<HubDb> options) : DbContext(options)
     public DbSet<Execution> Executions => Set<Execution>();
     public DbSet<ExecutionLog> Logs => Set<ExecutionLog>();
     public DbSet<JobRun> Jobs => Set<JobRun>();
+    public DbSet<MappingDefinition> MappingDefinitions => Set<MappingDefinition>();
     protected override void ConfigureConventions(ModelConfigurationBuilder configuration)
         => configuration.Properties<DateTime>().HaveConversion<Integration.Shared.UtcDateTimeConverter>();
     protected override void OnModelCreating(ModelBuilder model)
@@ -19,6 +20,7 @@ public class HubDb(DbContextOptions<HubDb> options) : DbContext(options)
         // At most one active (queued, running or retrying) sync per customer; completed/failed history is unlimited.
         model.Entity<Execution>().HasIndex(x => new { x.Kind, x.SourceId }).IsUnique()
             .HasDatabaseName(ActiveSyncIndex).HasFilter(ActiveSyncFilter);
+        model.Entity<MappingDefinition>().HasIndex(x => new { x.Name, x.Version }).IsUnique();
     }
     public const string ActiveSyncIndex = "IX_Executions_ActiveCustomerSync";
     public const string ActiveSyncFilter = "\"Kind\" = 'CustomerSync' AND \"Status\" IN ('Pending', 'Running', 'Retrying')";
@@ -35,5 +37,15 @@ public class HubDb(DbContextOptions<HubDb> options) : DbContext(options)
             "UPDATE \"Executions\" SET \"SourceId\" = \"OrderId\" WHERE \"SourceId\" IS NULL AND \"Kind\" = 'SalesOrder'");
         await Integration.Shared.SchemaUpgrade.ExecuteAsync(db,
             $"CREATE UNIQUE INDEX IF NOT EXISTS \"{ActiveSyncIndex}\" ON \"Executions\" (\"Kind\", \"SourceId\") WHERE {ActiveSyncFilter}");
+        // Milestone B: versioned mapping definitions (additive; existing executions are untouched).
+        await Integration.Shared.SchemaUpgrade.ExecuteAsync(db, """
+            CREATE TABLE IF NOT EXISTS "MappingDefinitions" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_MappingDefinitions" PRIMARY KEY AUTOINCREMENT, "Name" TEXT NOT NULL, "Version" INTEGER NOT NULL,
+                "Description" TEXT NULL, "SourceSystem" TEXT NOT NULL, "SourceTable" TEXT NOT NULL, "SourceSchemaVersion" INTEGER NOT NULL,
+                "TargetSystem" TEXT NOT NULL, "TargetTable" TEXT NOT NULL, "TargetSchemaVersion" INTEGER NOT NULL,
+                "FieldsJson" TEXT NOT NULL, "CreatedBy" TEXT NOT NULL, "CreatedAt" TEXT NOT NULL)
+            """);
+        await Integration.Shared.SchemaUpgrade.ExecuteAsync(db,
+            "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_MappingDefinitions_Name_Version\" ON \"MappingDefinitions\" (\"Name\", \"Version\")");
     }
 }

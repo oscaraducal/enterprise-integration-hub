@@ -16,6 +16,7 @@ public partial class Program
         app.UseDemoDefaults();
         using (var scope = app.Services.CreateScope())
             await CrmDb.InitializeAsync(scope.ServiceProvider.GetRequiredService<CrmDb>());
+        app.MapCatalog(BuiltInTables);
 
         app.MapGet("/api/customers", async (CrmDb db) => await db.Customers.AsNoTracking().OrderBy(x => x.Id).ToListAsync());
         app.MapGet("/api/customers/{id}", async (string id, HttpRequest request, CrmDb db, CancellationToken ct) =>
@@ -99,6 +100,20 @@ public partial class Program
         });
         await app.RunAsync();
     }
+    /// <summary>The CRM's code-defined tables, published in the Data Catalog for schema discovery (read-only there).</summary>
+    public static readonly BuiltInTable<CrmDb>[] BuiltInTables =
+    [
+        new(new TableView("customers", "Customers", "Customer master owned by the CRM. Every edit increments the version and stores a revision.", "customerId",
+            [new("customerId", "string", true, Description: "e.g. C-300"), new("customerName", "string", true),
+             new("email", "string", Description: "Optional in the CRM, required by the ERP"), new("phone", "string"),
+             new("status", "enum", true, CustomerStatuses.All), new("version", "integer", true, Description: "Increments on every change", ReadOnly: true),
+             new("updatedAt", "datetime", ReadOnly: true)], 1, true, null, null),
+            "/api/customers", (db, ct) => db.Customers.CountAsync(ct)),
+        new(new TableView("sales_orders", "Sales orders", "Sales orders captured in the CRM. Each references a customer.", "id",
+            [new("id", "string", true, Description: "e.g. ORD-013"), new("customerId", "string", true, Description: "References customers.customerId"),
+             new("currency", "string", true, Description: "ISO 4217 code"), new("amount", "decimal", true, Description: "Major units, e.g. 410.25")], 1, true, null, null),
+            "/api/orders", (db, ct) => db.Orders.CountAsync(ct)),
+    ];
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static Dictionary<string, string[]> ValidateCustomer(CustomerInput input)
     {
@@ -113,8 +128,11 @@ public partial class Program
         Snapshot = JsonSerializer.Serialize(c, JsonSerializerOptions.Web)
     };
 }
-public class CrmDb(DbContextOptions<CrmDb> options) : DbContext(options)
+public class CrmDb(DbContextOptions<CrmDb> options) : DbContext(options), ICatalogDb
 {
+    public DbSet<CatalogTable> CatalogTables => Set<CatalogTable>();
+    public DbSet<CatalogTableVersion> CatalogTableVersions => Set<CatalogTableVersion>();
+    public DbSet<CatalogRecord> CatalogRecords => Set<CatalogRecord>();
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<CrmOrder> Orders => Set<CrmOrder>();
     public DbSet<CustomerRevision> Revisions => Set<CustomerRevision>();
@@ -127,6 +145,7 @@ public class CrmDb(DbContextOptions<CrmDb> options) : DbContext(options)
         model.Entity<CrmOrder>().HasKey(x => x.Id);
         model.Entity<CrmOrder>().HasOne<Customer>().WithMany().HasForeignKey(x => x.CustomerId);
         model.Entity<CustomerRevision>().ToTable("CustomerRevisions").HasIndex(x => x.CustomerId);
+        CatalogModel.Configure(model);
     }
 
     /// <summary>Creates or additively upgrades the schema, then inserts any missing synthetic seed records.</summary>
@@ -142,6 +161,7 @@ public class CrmDb(DbContextOptions<CrmDb> options) : DbContext(options)
                 "CustomerId" TEXT NOT NULL, "Version" INTEGER NOT NULL, "Snapshot" TEXT NOT NULL, "ChangedAt" TEXT NOT NULL)
             """);
         await SchemaUpgrade.ExecuteAsync(db, """CREATE INDEX IF NOT EXISTS "IX_CustomerRevisions_CustomerId" ON "CustomerRevisions" ("CustomerId")""");
+        await CatalogModel.EnsureSchemaAsync(db);
 
         var now = DateTime.UtcNow;
         Customer[] seedCustomers =

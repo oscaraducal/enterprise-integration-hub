@@ -1,4 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- The ASP.NET RouteHandlerAnalyzer throws NullReferenceException (AD0001) on route handlers whose parameters use a
+         generic type parameter (CatalogEndpoints.MapCatalog<TDb>). Only the analyzer crash is suppressed. -->
+    <NoWarn>$(NoWarn);AD0001</NoWarn>
+  </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.15" />
