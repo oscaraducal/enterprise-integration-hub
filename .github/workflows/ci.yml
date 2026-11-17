@@ -1,9 +1,11 @@
 name: Build and test
 on:
   push:
-    branches: [main]
+    # The workbench branch is verified on every push without opening a PR into main.
+    branches: [main, feature/visual-integration-workbench]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
