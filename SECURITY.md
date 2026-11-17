@@ -9,7 +9,8 @@ This application is designed for local portfolio demonstration with synthetic re
 - Browser tokens remain in memory; only the theme preference is stored in localStorage.
 - Mock business APIs require a service key. The dashboard does not receive that key.
 - Input sizes, environments, scenarios, amount ranges and foreign customer references are validated.
-- Logs use controlled messages and correlation IDs, not headers or raw bodies.
+- Logs use controlled messages and correlation IDs, not headers or raw bodies. Audit entries attribute actions to the fixed demo account name and role only.
+- Sign-out, a 401 response or token expiry aborts in-flight dashboard requests and clears all protected data from memory. Late responses are discarded.
 - Docker exposes only loopback ports and runs applications as non-root users.
 - OpenAPI and health are intentionally anonymous on the local development network.
 

@@ -1,125 +1,185 @@
 # Enterprise Integration Hub
 
-A production-inspired **local demonstration** of API integration, execution monitoring and troubleshooting, built with **ASP.NET Core 10, Angular 21, Entity Framework Core and SQLite**.
+[![Build and test](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml/badge.svg?branch=feature/initial-implementation)](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml)
+![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)
+![Angular 21](https://img.shields.io/badge/Angular-21-DD0031)
+![Synthetic data](https://img.shields.io/badge/data-synthetic%20only-2e7d32)
 
-Follow fictional customer orders from a mock CRM through validation and JSON transformation into a mock ERP. Investigate failures, observe bounded automatic retries and safely replay failed executions without duplicating accepted orders.
+**A CRM-to-ERP integration simulator with a monitoring and troubleshooting console.** Built with **C# / ASP.NET Core 10, Entity Framework Core, SQLite and Angular 21**, it shows the parts of enterprise integration that matter after the first successful HTTP call: execution tracking, failure classification, bounded automatic retries, safe manual replay, idempotent delivery, audit trails, and a dashboard that stays useful during an upstream outage.
 
-> Synthetic systems and data only. This is not an Oracle Integration Cloud, Dell Boomi or ESP dSeries implementation. It contains no employer-owned information. The workload module demonstrates lower-environment monitoring, not real scheduling or scheduler automation.
+> **Portfolio disclaimer.** This is a personal engineering portfolio project. All systems (Mock CRM, Mock ERP) and all data are fictional. It is **not** an Oracle Integration Cloud, Dell Boomi or ESP dSeries implementation, it does not connect to any vendor platform, and it contains no employer-owned code, credentials, customer data or execution logs. The concepts it demonstrates (execution IDs, stage logs, retries and lower-environment job monitoring) reflect general integration-operations experience.
 
-## What you can demonstrate
+---
 
-- Three independently hosted REST APIs with documented JSON contracts.
-- A durable SQLite execution queue with unique IDs, stage logs and crash recovery.
-- Integer minor-unit ERP amounts mapped from decimal CRM amounts.
-- HTTP 400/401/404/429/500/503, timeouts, validation and duplicate-conflict simulations.
-- A maximum of three attempts per cycle; exponential backoff and bounded Retry-After support.
-- Database-backed order deduplication, payload freezing and idempotent ERP receipts.
-- JWT authentication with Operator and read-only Viewer roles.
-- Responsive Angular dashboard with light/dark themes, status distribution, metrics, filters, investigation timeline and safe retry.
-- Fictional DEV/TEST workload history and failure investigation.
-- Unit, API integration and real-service browser tests; GitHub Actions CI.
+## Contents
+[Features](#features) · [Architecture](#architecture) · [Screenshots](#screenshots) · [Quick start](#quick-start-docker) · [Demo](#demo-in-five-minutes) · [Testing](#testing-and-verification) · [Tech stack](#technology-stack) · [Limitations](#known-mvp-limitations) · [Docs](#documentation)
 
-## Quick start: Docker
+## Features
 
-Prerequisites: Git, Node.js 24, Docker Engine/Desktop with Compose.
+**Integration**
+- Three independently hosted REST APIs (Mock CRM → Integration Middleware → Mock ERP) with OpenAPI contracts.
+- JSON validation and mapping: decimal CRM amounts become integer ERP minor units, and currency and customer references are checked.
+- Mapped payloads are frozen on the first valid mapping, so retries can never silently send different data.
+
+**Reliability**
+- A durable SQLite execution queue with a single background worker and atomic claims.
+- Failure classification (400/401/404/409 are permanent; 408/429/5xx/connection/timeout are transient).
+- At most **3 automatic attempts per cycle**, with exponential backoff and bounded `Retry-After` support. The budget also holds across crashes and restarts.
+- Idempotent ERP acceptance: an identical replay returns the original receipt, and a changed payload is rejected with 409.
+
+**Monitoring and troubleshooting**
+- A unique execution ID per order and an attributed audit timeline (Queued → Started *n of 3* → Retrieved → Mapped → Completed / RetryScheduled / RetryExhausted / Failed / ManualRetry / Recovery*).
+- Troubleshooting guidance per error class, and an operator-only **Safely retry** action.
+- Search, status and environment filters, plus pagination that stays valid as data changes.
+- **Partial-outage tolerance:** if the CRM goes down, history, metrics and investigation keep updating behind a non-blocking warning.
+- Synthetic DEV/TEST workload history and failed-job investigation (no real scheduler connection).
+
+**Security and UX**
+- JWT authentication with **Operator** (run/retry) and **Viewer** (read-only) roles enforced server-side, plus rate-limited login.
+- Generated local credentials only, loopback-only ports and non-root containers.
+- Responsive console (mobile, tablet, desktop), light and dark themes, keyboard-accessible tables and 44px touch targets.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    User["Operator / Viewer<br/>(browser)"] --> UI["Angular 21 console<br/>polling · isolated sections"]
+    UI -->|"JWT · REST /api"| Hub
+    subgraph Hub["Integration Middleware (ASP.NET Core 10)"]
+      direction TB
+      API["REST API<br/>auth · validation · metrics"] --> Q[("SQLite<br/>executions · audit logs · jobs")]
+      W["Background worker<br/>classify · retry · recover"] --> Q
+    end
+    W -->|"GET order · service key"| CRM["Mock CRM API<br/>synthetic customers/orders"]
+    W -->|"POST mapped order · service key"| ERP["Mock ERP API<br/>idempotency + receipts"]
+    CRM --> CrmDb[("SQLite")]
+    ERP --> ErpDb[("SQLite")]
+```
+
+**Data flow:** an operator queues a source order (HTTP 202). The worker claims it, then fetches the order from the CRM, validates it, maps it and freezes the payload, then posts it to the ERP with the execution ID. Every stage is persisted to the timeline. Transient failures are rescheduled with backoff until the 3-attempt budget is spent. Permanent failures stop for investigation. ERP idempotency makes replays safe after lost responses or crashes. This is *at-least-once delivery with idempotent acceptance*, not distributed exactly-once.
+
+Details: [ARCHITECTURE.md](ARCHITECTURE.md) (lifecycle state machine, audit trail, crash recovery, dashboard loading model).
+
+## Screenshots
+
+The CI browser tests capture screenshots of the real running stack in every run: the desktop dashboard after a completed integration, mobile/tablet/desktop layouts, the partial CRM outage notice, and the dark-theme investigation view on mobile. Download them from the **verification-reports** artifact of the latest [GitHub Actions run](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml) (`frontend/test-results/*.png`).
+
+<!-- Screenshots will be embedded here once copied from a CI artifact into docs/screenshots/. -->
+
+## Quick start (Docker)
+
+Prerequisites: **Git, Node.js 24, Docker Desktop / Engine with Compose**. Windows 11 users can follow the step-by-step **[Windows 11 checklist](docs/WINDOWS_TESTING.md)**.
 
 ```sh
 git clone https://github.com/oscaraducal/enterprise-integration-hub.git
 cd enterprise-integration-hub
 git switch feature/initial-implementation
-node scripts/setup.mjs
+node scripts/setup.mjs        # writes random local credentials to the git-ignored .env
 docker compose up --build
 ```
 
-1. Open **http://localhost:4200**.
-2. Read the generated `DEMO_PASSWORD` from your local `.env`.
-3. Sign in as **operator** to run/retry, or **viewer** to inspect.
-4. Run **ORD-001** with scenario **None**.
-5. Open **Inspect** to review the mapped payload, stage timeline and ERP receipt.
-6. Use another order for each scenario. Try **Unavailable** with one failing attempt to see recovery, or three to exhaust retries.
-7. Retry a failed execution to clear its simulation and retain its transaction identity.
+Open **http://localhost:4200** and sign in as **operator** or **viewer** using `DEMO_PASSWORD` from your local `.env`. Never commit or share that file.
 
-The setup script generates random local credentials and refuses to overwrite an existing `.env`. Do not publish that file or paste its contents into issues. The repository includes only configuration placeholders.
+- Stop: `docker compose down` (data is kept in named volumes).
+- Reset: `docker compose down -v` **permanently deletes all demo data**, and the next start reseeds it.
 
-All published container ports bind to loopback. Stop with `docker compose down`; data remains in named volumes. `docker compose down -v` **deletes all demo databases** and reseeds the next start.
-
-## Run without Docker
-
-Prerequisites: **.NET 10 SDK** (the runtime alone is insufficient), **Node.js 24 with npm**, and Git.
-
-From the repository root:
+<details>
+<summary>Run without Docker (.NET 10 SDK + Node.js 24)</summary>
 
 ```sh
 node scripts/setup.mjs
 dotnet restore EnterpriseIntegrationHub.slnx
 dotnet build EnterpriseIntegrationHub.slnx -c Release --no-restore
-node scripts/dev.mjs
+node scripts/dev.mjs          # starts CRM :5101, ERP :5102, middleware :5100
 ```
 
-In a second terminal:
+Second terminal:
 
 ```sh
 cd frontend
 npm ci
-npm start
+npm start                     # http://localhost:4200, proxies /api to :5100
 ```
 
-Visit http://localhost:4200. The API launcher starts all three processes and places SQLite files in ignored `.data/`. Press Ctrl+C to stop it.
-
-| Service | Local URL | OpenAPI JSON |
+| Service | URL | OpenAPI |
 |---|---|---|
-| Middleware | http://localhost:5100 | http://localhost:5100/openapi/v1.json |
-| Mock CRM | http://localhost:5101 | http://localhost:5101/openapi/v1.json |
-| Mock ERP | http://localhost:5102 | http://localhost:5102/openapi/v1.json |
-| Angular console | http://localhost:4200 | — |
+| Middleware | http://localhost:5100 | /openapi/v1.json |
+| Mock CRM | http://localhost:5101 | /openapi/v1.json |
+| Mock ERP | http://localhost:5102 | /openapi/v1.json |
 
-The dashboard proxies `/api` to the middleware; service keys are never sent to the browser. OpenAPI documents can be imported into free API clients. A hosted Swagger UI is not required.
+The dashboard proxies `/api` to the middleware, and service keys never reach the browser. SQLite files live in the git-ignored `.data/` folder.
+</details>
 
-## Verification
+## Demo in five minutes
 
-```sh
-dotnet test EnterpriseIntegrationHub.slnx -c Release
-cd frontend
-npm ci
-npm run build
-npx playwright install chromium
-```
+| # | Do this | What it shows |
+|---|---|---|
+| 1 | Run **ORD-001**, scenario **None** | Full trace: mapping to minor units, frozen payload, ERP receipt |
+| 2 | Run **ORD-002**, **Unavailable**, 1 failure | `RetryScheduled` → automatic recovery |
+| 3 | Run **ORD-003**, **BadRequest** | Permanent failure, guidance, then **Safely retry** with an attributed audit entry |
+| 4 | Run **ORD-001** again | Duplicate source order rejected |
+| 5 | `docker compose stop crm` | Partial-outage notice; history and investigation still live |
+| 6 | Sign in as **viewer** | Read-only role enforced by the API, not only hidden in the UI |
 
-For browser tests, keep the three APIs running, and export `DEMO_PASSWORD` from your local `.env` into the test terminal's environment before running `npm test`. Playwright starts Angular automatically. Browser scenarios use ORD-001 through ORD-003 and expect fresh demo databases. See [TEST_CASES.md](TEST_CASES.md) for repeatable clean-state instructions and the distinction between written tests and verified results.
+The full script is in [docs/DEMO.md](docs/DEMO.md).
 
-CI builds all projects, runs backend tests, starts the actual CRM/ERP/middleware processes, builds Angular and executes Chromium browser tests. Reports are uploaded as workflow artifacts. See the [Actions page](https://github.com/oscaraducal/enterprise-integration-hub/actions) for actual results.
+## Testing and verification
 
-## Repository map
+| Suite | What it covers | Where it runs |
+|---|---|---|
+| Backend (xUnit) | Mapping, classification, backoff, retries, retry budget, crash recovery, idempotency, audit trail, auth/roles, partial CRM outage at the API, mock CRM/ERP contracts | `dotnet test` · CI |
+| Angular production build | Type-checked templates, SCSS, bundle budget | `npm run build` · CI |
+| Browser (Playwright, Chromium) | Real CRM/ERP/middleware end to end, plus injected partial outages, stale-response races, filters and pagination, sign-out and expiry, keyboard tables, mobile/tablet/desktop layouts | `npm test` · CI |
+| Docker smoke test | Compose stack, nginx proxy, JWT login, CRM mapping, ERP retry and receipt | CI |
 
-```text
-src/Shared/              Contracts, validation, JSON logging and demo host defaults
-src/MockCrm/             Fictional customers and orders API
-src/MockErp/             Validating, idempotent receiving API
-src/Hub/Domain/          Executions, stage logs and synthetic job records
-src/Hub/Application/     Mapping orchestration and retry classification
-src/Hub/Infrastructure/  EF Core persistence and durable queue worker
-frontend/               Angular operations console and browser tests
-tests/Hub.Tests/        Unit and API integration tests
-scripts/                Local credential setup and multi-process launcher
-.github/workflows/      Automated build and verification
-```
+Results come from GitHub Actions, not from this README. See the [latest CI runs](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml) and the PR [oscaraducal/enterprise-integration-hub#1](https://github.com/oscaraducal/enterprise-integration-hub/pull/1) for the recorded outcomes. Test catalogue and local instructions: [TEST_CASES.md](TEST_CASES.md).
+
+## Technology stack
+
+| Area | Technology |
+|---|---|
+| Backend | C# 14, ASP.NET Core 10 minimal APIs, `BackgroundService`, `IHttpClientFactory` |
+| Persistence | Entity Framework Core 10 + SQLite (one database per service) |
+| Security | JWT bearer (HMAC-SHA256), role policies, ASP.NET Core rate limiting, service keys |
+| Frontend | Angular 21 standalone components and signals, Angular Material 3, SCSS |
+| Testing | xUnit, `WebApplicationFactory`, Playwright (Chromium) |
+| Delivery | Docker Compose, nginx, GitHub Actions |
+
+## Known MVP limitations
+
+- **Local demonstration only.** Startup refuses non-Development/Testing environments. It uses HTTP, a shared generated demo password and a simple service key. It is not hardened for internet exposure.
+- **Single replica.** Crash recovery assumes one middleware process. There are no distributed leases, message broker or outbox.
+- **Schema:** `EnsureCreated` instead of versioned migrations. DEV/TEST are labels in one database, not isolated environments.
+- **Delivery:** at-least-once with idempotent acceptance, not exactly-once. Metrics are aggregated in-process for modest demo volumes.
+- **Auth:** two fixed demo accounts, memory-only 30-minute tokens and no refresh tokens. A page reload signs out.
+- **Workloads** are synthetic history records. Nothing is scheduled or executed.
 
 ## Documentation
 
-- [Architecture and reliability](ARCHITECTURE.md)
-- [API contracts and examples](API_DOCUMENTATION.md)
-- [Automated and manual test cases](TEST_CASES.md)
-- [Demo walkthrough](docs/DEMO.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Security boundaries](SECURITY.md)
-- [Portfolio description](PORTFOLIO_DESCRIPTION.md)
+| Document | Purpose |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, lifecycle, retry and recovery rules, audit trail, dashboard loading |
+| [API_DOCUMENTATION.md](API_DOCUMENTATION.md) | Endpoints, contracts, scenarios, error classes |
+| [TEST_CASES.md](TEST_CASES.md) | Automated and manual test catalogue |
+| [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md) | Windows 11 + Docker Desktop manual checklist |
+| [docs/DEMO.md](docs/DEMO.md) | Five-minute walkthrough script |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Error classes and fixes |
+| [SECURITY.md](SECURITY.md) | Security boundaries and what a production rollout would need |
+| [PORTFOLIO_DESCRIPTION.md](PORTFOLIO_DESCRIPTION.md) | Profile-ready project description |
 
-## Intentional MVP limits
+<details>
+<summary>Repository map</summary>
 
-This is a single-replica, local simulator, not a production integration service. Startup refuses non-Development/non-Testing environments. Authentication uses locally generated demo credentials, short-lived in-memory browser tokens and two fixed roles. There is no user administration, refresh-token service or external identity provider.
-
-SQLite uses `EnsureCreated` for a fresh demo schema; versioned migrations, multi-replica leases, retention, distributed messaging, circuit breakers, live scheduler integrations and production deployment are future work. DEV/TEST are labels within the same demo database, not isolated infrastructures. One source order ID is tracked once across those labels.
-
-Only USD, PHP and EUR are supported, each with two decimal places. Job simulation writes completed history records immediately; it does not schedule or execute real workloads. The MVP has bounded list pages but aggregates metrics in-process and is intended for modest demo volumes.
-
-Dependency versions and the resolved npm lockfile are committed. Local, CI and container builds use `npm ci` for reproducible dependency installation.
+```text
+src/Shared/              Contracts, validation, mapping, demo host defaults
+src/MockCrm/             Fictional customers and orders API
+src/MockErp/             Validating, idempotent receiving API
+src/Hub/Domain/          Executions, audit logs, synthetic job records
+src/Hub/Application/     IntegrationRunner, FailurePolicy, ExecutionRecovery
+src/Hub/Infrastructure/  EF Core DbContext and the background worker
+frontend/                Angular console and Playwright tests
+tests/Hub.Tests/         Unit, recovery and API integration tests
+scripts/                 Credential setup, native launcher, Docker smoke test
+.github/workflows/       CI: build, tests, browser tests, Compose smoke
+```
+</details>

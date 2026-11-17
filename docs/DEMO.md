@@ -20,7 +20,13 @@ Use ORD-003 with BadRequest. Open the error class, controlled troubleshooting me
 
 Submit the same source order again and show the 409 behavior. Explain that ERP also checks a unique ID and payload fingerprint so a lost response can be reconciled without a second acceptance.
 
-## 5. Demonstrate monitoring and scope
+## 5. Show resilience during an upstream outage (optional, Docker)
+
+Run `docker compose stop crm`. Point out the yellow partial-outage notice: history, metrics and investigation keep working, which is exactly what an operator needs during an incident. Run a new order: it shows `RetryScheduled` and then `RetryExhausted` with a Connection classification. Run `docker compose start crm`, then retry it safely.
+
+To show crash recovery, start a Timeout execution with three failing attempts. Run `docker compose kill hub` and then `docker compose start hub`, and open the timeline. `RecoveryScheduled` or `RecoveryExhausted` shows that the 3-attempt budget held across the restart.
+
+## 6. Demonstrate monitoring and scope
 
 Search by execution ID, filter failed executions, switch themes, then open Workloads. Simulate a TEST failure and inspect its history.
 

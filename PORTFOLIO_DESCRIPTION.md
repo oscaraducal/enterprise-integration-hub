@@ -2,7 +2,7 @@
 
 ## Short profile version
 
-Built a synthetic enterprise integration platform using ASP.NET Core, Angular and SQLite. Implemented CRM-to-ERP REST communication, JSON validation and mapping, persistent execution history, bounded retries, duplicate prevention, JWT role-based access and a responsive troubleshooting dashboard. Added automated backend and browser tests with GitHub Actions.
+Built a synthetic enterprise integration platform using ASP.NET Core, Angular and SQLite. Implemented CRM-to-ERP REST communication, JSON validation and mapping, persistent execution history with an attributed audit trail, bounded retries that hold across crashes, duplicate prevention, JWT role-based access and a responsive troubleshooting dashboard that tolerates partial upstream outages. Added automated backend and browser tests with GitHub Actions.
 
 ## Project narrative
 
@@ -19,6 +19,8 @@ The Angular console brings together execution metrics, history, filters, detaile
 - Explain the unique order index, frozen payload and idempotent acceptance boundary.
 - Review tests for mapping, retries, validation, authorization and duplicate handling.
 - Show the actual CI run rather than claiming unverified test success.
+- Stop the mock CRM and show that execution history and investigation stay available behind a non-blocking warning.
+- Walk through the audit timeline: who queued and retried, each attempt "n of 3", and how crash recovery respects the retry budget.
 - Discuss the single-replica SQLite design and the changes needed for a production rollout.
 
 ## Accurate experience statement

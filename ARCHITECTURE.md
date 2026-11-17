@@ -40,6 +40,8 @@ stateDiagram-v2
     Running --> Retrying: transient error and attempts remain
     Retrying --> Running: persisted delay expires
     Running --> Failed: permanent error or exhausted attempts
+    Running --> Retrying: restart, budget remains
+    Running --> Failed: restart during final attempt
     Failed --> Pending: operator retry
     Completed --> [*]
 ```
@@ -60,16 +62,47 @@ Manual retry is an atomic Failed → Pending update with an audit log in the sam
 - Reusing the key with changed data returns HTTP 409.
 - If ERP commits but the response is lost, replay reconciles against the persistent record.
 - This is **at-least-once delivery with idempotent acceptance**, not a claim of distributed exactly-once processing.
-- A crash between a logged stage and the next stage can replay work. Startup moves Running rows to Retrying; the ERP guard protects acceptance.
+- A crash between a logged stage and the next stage can replay work; the ERP guard protects acceptance.
+- The attempt number is persisted (with a `Started` log) before any upstream call, so an interrupted attempt is counted. On startup, each Running row is resolved by `ExecutionRecovery`:
+  - attempts remaining → `Retrying` immediately, audited as `RecoveryScheduled`;
+  - final attempt interrupted → `Failed` with class `Interrupted`, audited as `RecoveryExhausted`. A manual retry is then required.
+  Repeated crashes therefore cannot exceed three automatic attempts per cycle. The runner also refuses to start an attempt beyond the budget (`RetryExhausted`), as a second safeguard.
 - Recovery assumes **one middleware replica**. Starting multiple replicas against the same file can invalidate startup recovery assumptions; distributed leases are intentionally out of scope.
-- Recovery from abrupt termination may produce an extra attempt beyond the normal cycle cap if the previous process died before recording an outcome.
-- Unexpected internal worker errors are classified as Internal and require operator investigation.
+- Unexpected internal worker errors mark the execution `Failed` with class `Internal`, record duration and an audit entry, and require operator investigation. Nothing is left in Running unless the process itself stops, in which case startup recovery resolves it.
+
+## Audit trail
+
+Each lifecycle decision writes an `ExecutionLog` row in the same `SaveChanges` call (or transaction) as the state change, so the timeline never disagrees with the stored status. Entries carry a UTC timestamp, execution ID, attempt number and level.
+
+| Stage | When | Level |
+|---|---|---|
+| Queued | Execution created; names the actor (`operator (Operator)`), environment, simulation and budget | Information |
+| Started | Attempt *n* of 3 begins | Information |
+| Retrieved / Mapped | Source fetched; payload validated and frozen | Information |
+| Completed | ERP accepted, or confirmed an existing matching receipt | Information |
+| RetryScheduled | Transient failure with budget remaining; shows class, next attempt and delay | Warning |
+| RetryExhausted | Transient failure on the final attempt, or an attempt refused beyond budget | Error |
+| Failed | Permanent failure (not retried automatically), or unexpected Internal error | Error |
+| ManualRetry | Operator retry; names the actor, previous class and attempt, and the new cycle | Information |
+| RecoveryScheduled / RecoveryExhausted | Startup crash-recovery decision | Warning / Error |
+
+Messages are fixed templates. Tokens, service keys, headers, raw upstream bodies and exception messages are never written. Actor names are the fixed demo account names. The log schema is unchanged, so existing demo databases keep working.
+
+## Dashboard data loading
+
+The console polls every 2.5 seconds. Metrics, execution history, CRM source orders, workloads and the open execution's details are separate requests with **isolated failure handling**:
+
+- A failed section keeps its last good data and appears in a non-blocking *Some data could not be refreshed* notice with its last update time. Other sections keep updating. A CRM outage therefore never hides the execution history needed to investigate it.
+- Each section has a request sequence number. Only the newest response is applied, so a slow, older response cannot overwrite a newer filtered result.
+- Polling is skipped while requests are in flight. User actions such as filters, paging and Refresh always issue a request.
+- Search text is applied on submit. Status and environment filters apply immediately and reset to page 1. An emptied page moves to the last valid page.
+- Sign-out (or a 401, or reaching the token's `expiresAt`) aborts in-flight requests, increments a session generation that invalidates late responses, and clears all protected data and filters.
 
 ## Data and observability
 
 Execution timestamps are UTC. The UI formats them in the browser's local timezone. Duration covers the current execution cycle, including automatic retry waits. A manual retry starts a new cycle; historical stage timestamps remain available.
 
-Success rate = Completed / all executions, including in-flight rows. Average duration uses finished cycles with a recorded duration. Status chart and KPI metrics are global; search/status/environment filters apply to the execution table, and environment filtering also applies to the workload table.
+Success rate = Completed / all executions, including in-flight rows. Average duration uses finished cycles with a recorded duration. Status chart and KPI metrics are global; search/status/environment filters apply to the execution table. The workload table has its own environment filter.
 
 Logs carry execution ID, stage, attempt and status. Persisted messages are controlled strings. Raw upstream bodies, authorization headers, credentials and exception messages are deliberately excluded from logs. Mapped payloads contain synthetic order data and are visible only to authenticated users.
 

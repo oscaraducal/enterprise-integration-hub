@@ -48,7 +48,11 @@ History query:
 
 Response: `{"items":[],"total":0,"page":1,"pageSize":20}`. Search is a maximum 64 characters. Statuses are Pending, Running, Completed, Failed, Retrying. Omit status/environment rather than sending invalid values.
 
-Retry request: `POST /api/executions/<id>/retry` with `{}`. Returns 202, 404 for an unknown ID or 409 unless Failed. Simulation is cleared; mapping, idempotency identity and old logs are retained.
+Retry request: `POST /api/executions/<id>/retry` with `{}`. Returns 202, 404 for an unknown ID or 409 unless Failed. Simulation is cleared; mapping, idempotency identity and old logs are retained. Attempts reset to 0 for a new 3-attempt cycle, and a `ManualRetry` log names the operator, the previous error class and the attempt number.
+
+Execution detail `logs[]` is the audit trail: `{id, executionId, timestamp (UTC), stage, level, message, attempt}`. Stages: Queued, Started, Retrieved, Mapped, Completed, RetryScheduled, RetryExhausted, Failed, ManualRetry, RecoveryScheduled, RecoveryExhausted (see [ARCHITECTURE.md](ARCHITECTURE.md#audit-trail)). Additional error classes: `Interrupted` (worker restarted during the final attempt), `RetryBudgetExhausted` (attempt refused beyond budget), `Internal` (unexpected worker error).
+
+`GET /api/orders` returns **502** `{"title":"Mock CRM unavailable"}` when the CRM is unreachable, returns an error, or exceeds the 2-second timeout. Metrics, history and job endpoints do not depend on the CRM and keep returning 200 during a CRM outage.
 
 Job simulation: `{"environment":"DEV","fail":true}`. Returns 201 and the synthetic job. It writes a history record immediately; it does not execute a real workload or create a schedule.
 
