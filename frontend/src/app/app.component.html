@@ -27,8 +27,8 @@
       <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span><span>Integration <br><strong>Hub</strong></span></div>
       <div class="workspace-label">DEMO WORKSPACE</div>
       <nav aria-label="Main navigation">
-        @for(item of ['Overview','Executions','Workloads']; track item){
-          <button type="button" [attr.aria-label]="item" [attr.aria-current]="view() === item ? 'page' : null" [class.active]="view() === item" (click)="view.set(item)"><span aria-hidden="true">{{item === 'Overview' ? '◫' : item === 'Executions' ? '⇄' : '▤'}}</span>{{item}}</button>
+        @for(item of views; track item.name){
+          <button type="button" [attr.aria-label]="item.name" [attr.aria-current]="view() === item.name ? 'page' : null" [class.active]="view() === item.name" (click)="go(item.name)"><span aria-hidden="true">{{item.icon}}</span>{{item.name}}</button>
         }
       </nav>
       <div class="sidebar-bottom"><span class="live-dot"></span> Local simulator<p>CRM → Middleware → ERP</p><small>Fictional systems. Real engineering.</small></div>
@@ -36,8 +36,8 @@
     <div class="workspace">
       <header class="topbar"><span>Workspace <b>/ {{view()}}</b></span><div><span class="demo-tag">DEMO</span><span class="role">{{role()}}</span><button mat-button (click)="toggleTheme()" aria-label="Toggle theme">{{dark() ? 'Light' : 'Dark'}} theme</button><button mat-button (click)="logout()">Sign out</button></div></header>
       <main class="content">
-        <div class="page-heading"><div><span class="eyebrow">INTEGRATION OPERATIONS</span><h1>{{view() === 'Overview' ? 'Operations overview' : view() === 'Executions' ? 'Execution explorer' : 'Workload monitor'}}</h1><p class="muted">{{view() === 'Workloads' ? 'Fictional DEV and TEST job history. No external scheduler connection.' : 'Monitor the flow. Find the failure. Keep orders moving.'}}</p></div>
-          <button mat-stroked-button class="refresh-button" (click)="refresh()" [disabled]="refreshing()" [attr.aria-busy]="refreshing()"><span aria-hidden="true">↻</span>&nbsp;Refresh</button></div>
+        <div class="page-heading"><div><span class="eyebrow">INTEGRATION OPERATIONS</span><h1>{{viewInfo().title}}</h1><p class="muted">{{viewInfo().subtitle}}</p></div>
+          <button mat-stroked-button class="refresh-button" (click)="manualRefresh()" [disabled]="refreshing()" [attr.aria-busy]="refreshing()"><span aria-hidden="true">↻</span>&nbsp;Refresh</button></div>
         @if(error()){ <div class="alert error" role="alert">{{error()}} <button type="button" (click)="error.set('')" aria-label="Dismiss error">×</button></div> }
         @if(notice()){ <div class="alert success" role="status">{{notice()}} <button type="button" (click)="notice.set('')" aria-label="Dismiss notification">×</button></div> }
         @if(degraded().length){
@@ -48,7 +48,12 @@
             }</ul>
           </div>
         }
-        @if(view() !== 'Workloads'){
+        @if(view() === 'Source System'){ <app-source [api]="api" [focus]="focus()" [refreshTick]="tick()" (inspect)="openExecution($event)" (open)="go($event)"></app-source> }
+        @else if(view() === 'Target System'){ <app-target [api]="api" [focus]="focus()" [refreshTick]="tick()" (inspect)="openExecution($event)" (open)="go($event)"></app-target> }
+        @else if(view() === 'Mapping Studio'){ <app-mapping [api]="api" [focus]="focus()" (inspect)="openExecution($event)"></app-mapping> }
+        @else if(view() === 'Scenarios'){ <app-scenarios mode="catalog" (open)="go($event)"></app-scenarios> }
+        @else if(view() === 'Guides'){ <app-scenarios mode="guides" [scenario]="focus()?.scenario" (open)="go($event)"></app-scenarios> }
+        @else if(view() === 'Overview' || view() === 'Executions'){
           <section class="metrics" aria-label="Execution metrics" [class.stale]="section('metrics').error">
             <article class="metric panel"><span>Total executions</span><strong>{{metrics().total}}</strong><small>All environments</small></article>
             <article class="metric panel"><span>Successful</span><strong class="text-green">{{metrics().completed}}</strong><small>Confirmed by mock ERP</small></article>
@@ -90,9 +95,9 @@
             </form>
             @if(filtersPending()){ <p class="hint filter-hint">Press Search to apply the new search text.</p> }
             <div class="table-scroll" tabindex="0" role="region" aria-label="Execution history table, scrolls horizontally">
-              <table><caption class="sr-only">Integration executions, newest first. Page {{page()}} of {{pages()}}.</caption><thead><tr><th scope="col">Execution / order</th><th scope="col">Status</th><th scope="col">Environment</th><th scope="col">Started</th><th scope="col">Duration</th><th scope="col">Attempts</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>
-              @for(e of executions(); track e.id){<tr [class.selected-row]="selected()?.id === e.id"><td><code>{{e.id.slice(0,12)}}</code><small>{{e.orderId}}</small></td><td><span [class]="'pill ' + e.status">{{e.status}}</span></td><td><span class="env-label">{{e.environment}}</span></td><td>{{e.createdAt | date:'MMM d, HH:mm:ss'}}</td><td>{{duration(e.durationMs)}}</td><td>{{e.attempts}}</td><td><button mat-button (click)="inspect(e.id)" [attr.aria-label]="'Inspect ' + e.orderId">Inspect ↗</button></td></tr>}
-              @empty {<tr><td colspan="7" class="empty">@if(section('executions').error && !section('executions').updatedAt){<strong>Execution history unavailable</strong><p>{{section('executions').error}}</p>} @else if(filtersActive()){<strong>No matching executions</strong><p>Adjust or clear the filters.</p>} @else {<strong>No executions yet</strong><p>Run an integration above, or adjust your filters.</p>}</td></tr>}
+              <table><caption class="sr-only">Integration executions, newest first. Page {{page()}} of {{pages()}}.</caption><thead><tr><th scope="col">Execution / source</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Environment</th><th scope="col">Started</th><th scope="col">Duration</th><th scope="col">Attempts</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>
+              @for(e of executions(); track e.id){<tr [class.selected-row]="selected()?.id === e.id"><td><code>{{e.id.slice(0,12)}}</code><small>{{e.sourceId || e.orderId}}</small></td><td><span class="kind-label">{{e.kind === 'CustomerSync' ? 'Customer' : 'Order'}}</span></td><td><span [class]="'pill ' + e.status">{{e.status}}</span></td><td><span class="env-label">{{e.environment}}</span></td><td>{{e.createdAt | date:'MMM d, HH:mm:ss'}}</td><td>{{duration(e.durationMs)}}</td><td>{{e.attempts}}</td><td><button mat-button (click)="inspect(e.id)" [attr.aria-label]="'Inspect ' + (e.sourceId || e.orderId)">Inspect ↗</button></td></tr>}
+              @empty {<tr><td colspan="8" class="empty">@if(section('executions').error && !section('executions').updatedAt){<strong>Execution history unavailable</strong><p>{{section('executions').error}}</p>} @else if(filtersActive()){<strong>No matching executions</strong><p>Adjust or clear the filters.</p>} @else {<strong>No executions yet</strong><p>Run an integration above, or adjust your filters.</p>}</td></tr>}
             </tbody></table></div>
             <nav class="pagination" aria-label="Execution history pages"><span>Page {{page()}} of {{pages()}}</span><div><button mat-button [disabled]="page() <= 1" (click)="navigatePage(-1)">Previous</button><button mat-button [disabled]="page() >= pages()" (click)="navigatePage(1)">Next</button></div></nav>
           </section>
@@ -106,12 +111,19 @@
         }
         @if(selected(); as e){
           <section class="panel investigation" id="investigation" tabindex="-1" aria-label="Execution investigation">
-            <div class="section-heading"><div><span class="eyebrow">EXECUTION INVESTIGATION</span><h2>{{e.orderId}} <span [class]="'pill ' + e.status">{{e.status}}</span></h2></div><button mat-stroked-button (click)="closeDetails()">Close details</button></div>
+            <div class="section-heading"><div><span class="eyebrow">EXECUTION INVESTIGATION</span><h2>{{e.sourceId || e.orderId}} <span [class]="'pill ' + e.status">{{e.status}}</span></h2></div>
+              <div class="button-row">
+                <button mat-stroked-button (click)="go({ view: 'Source System', kind: e.kind === 'CustomerSync' ? 'customer' : 'order', id: e.sourceId || e.orderId })">Open source record</button>
+                @if(e.status === 'Completed'){ <button mat-stroked-button (click)="go({ view: 'Target System', kind: e.kind === 'CustomerSync' ? 'customer' : 'order', id: e.sourceId || e.orderId })">Open imported record</button> }
+                <button mat-stroked-button (click)="closeDetails()">Close details</button></div></div>
             <code class="execution-id">{{e.id}}</code>
+            <p class="kind-line">{{e.kind === 'CustomerSync' ? 'SCN-001/003 · Customer master sync' : 'SCN-002 · Sales order import'}} · Legacy CRM → Modern ERP{{e.sourceVersion ? ' · source version ' + e.sourceVersion : ''}}</p>
+            <ol class="pipeline compact" aria-label="Integration stages">@for(s of stageStates(e); track s.name; let i = $index){ <li [class]="s.state"><span>{{s.state === 'done' ? '✓' : s.state === 'failed' ? '✗' : i + 1}}</span>{{s.name}}</li> }</ol>
             @if(section('detail').error){<p class="inline-warning" role="status">Details could not be refreshed: {{section('detail').error}} Showing the last loaded state.</p>}
-            @if(e.errorClass){<div class="alert error"><b>{{e.errorClass}}</b><p>{{e.troubleshooting}}</p></div>}
+            @if(e.errorClass){<div class="alert error"><b>{{e.errorClass}}</b>@if(failedStage(e)){ <span class="failed-at">failed at: {{failedStage(e)}}</span> }<p>{{e.troubleshooting}}</p></div>}
             <div class="detail-grid"><div><h3>Execution timeline</h3><ol class="timeline">@for(log of e.logs; track log.id){<li [class]="'level-' + log.level"><div><b>{{log.stage}}</b><time [attr.datetime]="log.timestamp">{{log.timestamp | date:'HH:mm:ss'}}</time></div><p>{{log.message}}</p><small>Attempt {{log.attempt}} · {{log.level}}</small></li>}</ol></div>
-            <div><h3>Delivery details</h3><dl><dt>Environment</dt><dd>{{e.environment}}</dd><dt>Attempts</dt><dd>{{e.attempts}} of 3 this cycle</dd><dt>Receipt</dt><dd>{{e.receiptId || 'Awaiting acceptance'}}</dd><dt>Manual retries</dt><dd>{{e.retryCount}}</dd></dl><h3>Mapped payload</h3><pre tabindex="0" aria-label="Mapped ERP payload">{{e.mappedPayload || 'Payload will appear after validation.'}}</pre>
+            <div><h3>Delivery details</h3><dl><dt>Environment</dt><dd>{{e.environment}}</dd><dt>Attempts</dt><dd>{{e.attempts}} of 3 this cycle</dd><dt>Receipt</dt><dd>{{e.receiptId || 'Awaiting acceptance'}}</dd><dt>Type</dt><dd>{{e.kind === 'CustomerSync' ? 'Customer sync (upsert)' : 'Sales order (immutable)'}}</dd><dt>Manual retries</dt><dd>{{e.retryCount}}</dd></dl>@if(e.sourcePayload){ <h3>Source record (snapshot)</h3><pre tabindex="0" aria-label="Source record snapshot">{{sourceSnapshot(e)}}</pre> }
+              <h3>Mapped payload</h3><pre tabindex="0" aria-label="Mapped ERP payload">{{e.mappedPayload ? mappedPretty(e) : 'Payload will appear after validation.'}}</pre>
               @if(role() === 'Operator' && e.status === 'Failed'){<p class="hint">Retry clears the simulation and preserves the original transaction identity. Investigate real data conflicts first.</p><button mat-flat-button (click)="retry()" [disabled]="busy()">Safely retry execution</button>}
             </div></div>
           </section>

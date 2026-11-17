@@ -14,7 +14,7 @@ test('order travels through real mock APIs and shows a receipt and timeline', as
   await expect(panel).toBeVisible();
   await expect(panel.locator('.pill')).toHaveText('Completed', { timeout: 20000 });
   await expect(panel.getByText('Mock ERP accepted the order.')).toBeVisible();
-  await expect(panel.locator('pre')).toContainText('12550');
+  await expect(panel.getByLabel('Mapped ERP payload')).toContainText('12550');
   await page.screenshot({ path: 'test-results/dashboard-desktop.png', fullPage: true });
   const id = await panel.locator('.execution-id').innerText();
   await page.getByLabel('Search execution ID').fill(id);

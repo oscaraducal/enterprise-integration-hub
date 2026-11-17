@@ -3,6 +3,12 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { Execution, ExecutionPage, Job, Metrics, Order } from './models';
+import { Api, ApiError, Focus, SessionEnded, View } from './api';
+import { SourceComponent } from './source.component';
+import { TargetComponent } from './target.component';
+import { MappingComponent } from './mapping.component';
+import { ScenariosComponent } from './scenarios.component';
+import { PIPELINE } from './catalog';
 
 /** Independently loaded dashboard sections. One failing never blanks another. */
 export type Section = 'metrics' | 'executions' | 'orders' | 'jobs' | 'detail';
@@ -20,17 +26,35 @@ const emptySections = (): Record<Section, SectionState> => ({
   jobs: { error: '', updatedAt: null }, detail: { error: '', updatedAt: null }
 });
 
-/** Raised once a 401 has already ended the session, so callers do not show a second error. */
-class SessionEnded extends Error {}
+const VIEWS: { name: View; icon: string; title: string; subtitle: string }[] = [
+  { name: 'Overview', icon: '◫', title: 'Operations overview', subtitle: 'Monitor the flow. Find the failure. Keep orders moving.' },
+  { name: 'Source System', icon: '◧', title: 'Legacy CRM', subtitle: 'Source system: create and edit fictional customers and sales orders.' },
+  { name: 'Scenarios', icon: '❖', title: 'Integration scenarios', subtitle: 'Business cases, mappings and verification for each integration.' },
+  { name: 'Mapping Studio', icon: '⇆', title: 'Mapping Studio', subtitle: 'Source fields, transformation rules and target fields, with a side-effect-free preview.' },
+  { name: 'Target System', icon: '◨', title: 'Modern ERP', subtitle: 'Target system: inspect imported records and reconcile them with the source.' },
+  { name: 'Executions', icon: '⇄', title: 'Execution explorer', subtitle: 'Monitor the flow. Find the failure. Keep orders moving.' },
+  { name: 'Workloads', icon: '▤', title: 'Workload monitor', subtitle: 'Fictional DEV and TEST job history. No external scheduler connection.' },
+  { name: 'Guides', icon: '☰', title: 'Scenario guides', subtitle: 'Step-by-step walkthroughs with links straight to each screen.' },
+];
 
 @Component({
-  selector: 'app-root', standalone: true, imports: [CommonModule, FormsModule, MatButtonModule],
+  selector: 'app-root', standalone: true,
+  imports: [CommonModule, FormsModule, MatButtonModule, SourceComponent, TargetComponent, MappingComponent, ScenariosComponent],
   templateUrl: './app.component.html'
 })
 export class AppComponent implements OnDestroy {
   token = ''; username = 'operator'; password = ''; role = signal('');
   signedIn = signal(false); busy = signal(false);
-  error = signal(''); notice = signal(''); view = signal('Overview');
+  error = signal(''); notice = signal(''); view = signal<View>('Overview');
+  readonly views = VIEWS;
+  readonly pipeline = PIPELINE;
+  viewInfo = computed(() => VIEWS.find(v => v.name === this.view()) ?? VIEWS[0]);
+  /** Cross-page navigation target (e.g. open C-300 in the Mapping Studio). */
+  focus = signal<Focus | null>(null);
+  /** Incremented by the Refresh button so feature pages reload their source/target data on demand. */
+  tick = signal(0);
+  /** What feature pages get: the shell's authenticated request (session generation, abort and 401 handling included). */
+  readonly api: Api = { request: (p, m, b) => this.request(p, m, b), operator: () => this.role() === 'Operator' };
   dark = signal(this.storedTheme() === 'dark');
   metrics = signal<Metrics>(emptyMetrics());
   executions = signal<Execution[]>([]); total = signal(0); selected = signal<Execution | null>(null);
@@ -96,7 +120,7 @@ export class AppComponent implements OnDestroy {
       if (response.status === 401) throw new Error('Incorrect demo credentials.');
       if (response.status === 403) throw new Error('Your role cannot perform this action. Sign in as operator to run or retry.');
       if (response.status === 429) throw new Error('Too many requests. Wait a minute and try again.');
-      throw new Error(content.error || content.title || 'Request failed (' + response.status + ').');
+      throw new ApiError(content.error || content.title || 'Request failed (' + response.status + ').', response.status, content);
     }
     return response.json() as Promise<T>;
   }
@@ -130,7 +154,7 @@ export class AppComponent implements OnDestroy {
     this.orders.set([]); this.jobs.set([]); this.job.set(null); this.sections.set(emptySections());
     this.search = ''; this.status = ''; this.environment = ''; this.jobEnvironment = '';
     this.applied.set({ search: '', status: '', environment: '' }); this.page.set(1);
-    this.orderId = ''; this.view.set('Overview'); this.notice.set(''); this.busy.set(false);
+    this.orderId = ''; this.view.set('Overview'); this.focus.set(null); this.notice.set(''); this.busy.set(false);
     this.error.set(reason);
   }
 
@@ -156,6 +180,34 @@ export class AppComponent implements OnDestroy {
   }
   private setSection(section: Section, state: SectionState) { this.sections.update(s => ({ ...s, [section]: state })); }
 
+  /** Navigates between pages, optionally focusing a record or scenario. */
+  go(target: Focus | View) {
+    const f: Focus = typeof target === 'string' ? { view: target } : { ...target };
+    this.view.set(f.view); this.focus.set(f);
+    setTimeout(() => document.querySelector('.content')?.scrollIntoView({ block: 'start' }));
+  }
+  /** Opens an execution's investigation panel from any page. */
+  async openExecution(id: string) {
+    this.view.set('Executions'); this.focus.set(null);
+    await this.inspect(id); void this.refresh();
+  }
+  manualRefresh() { this.tick.update(t => t + 1); void this.refresh(); }
+  /** Pipeline stage status for the selected execution, from the stages logged in its latest attempt. */
+  stageStates(e: Execution): { name: string; state: 'done' | 'failed' | 'pending' }[] {
+    const attempt = Math.max(0, ...e.logs.map(l => l.attempt));
+    const stages = new Set(e.logs.filter(l => l.attempt === attempt).map(l => l.stage));
+    const reached = [true, stages.has('Retrieved'), stages.has('Mapped'), stages.has('Mapped'), stages.has('Completed'), stages.has('Completed'), true];
+    const failed = e.status === 'Failed' || e.status === 'Retrying';
+    const firstMissing = reached.indexOf(false);
+    return this.pipeline.map((name, i) => ({ name, state: reached[i] ? 'done' : failed && i === firstMissing ? 'failed' : 'pending' }));
+  }
+  failedStage(e: Execution): string {
+    if (e.status !== 'Failed' && e.status !== 'Retrying') return '';
+    const s = this.stageStates(e).find(x => x.state === 'failed');
+    return s ? s.name : 'Unknown stage';
+  }
+  sourceSnapshot(e: Execution) { try { return e.sourcePayload ? JSON.stringify(JSON.parse(e.sourcePayload), null, 2) : ''; } catch { return e.sourcePayload ?? ''; } }
+  mappedPretty(e: Execution) { try { return e.mappedPayload ? JSON.stringify(JSON.parse(e.mappedPayload), null, 2) : ''; } catch { return e.mappedPayload ?? ''; } }
   async refresh() {
     if (!this.signedIn()) return;
     await Promise.all([this.loadMetrics(), this.loadExecutions(), this.loadOrders(), this.loadJobs(), this.loadDetail()]);
