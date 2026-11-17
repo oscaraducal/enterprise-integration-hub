@@ -65,7 +65,7 @@ export function uniqueName(flow: FlowDefinition, base: string): string {
 
 const DEFAULT_CONFIG: Record<string, () => Record<string, any>> = {
   trigger: () => ({ mode: 'manual', parameters: [] }),
-  invoke: () => ({ system: 'crm', table: 'customers', operation: 'get', key: '' }),
+  invoke: () => ({}),
   assign: () => ({ assignments: [{ variable: '', expression: '' }] }),
   map: () => ({ input: '', targetSystem: 'erp', targetTable: '', rules: [] }),
   logger: () => ({ level: 'info', message: "'Checkpoint reached'" }),
@@ -118,7 +118,7 @@ export function variablesBefore(flow: FlowDefinition, targetId: string, tables: 
   const result: ScopeVar[] = [];
   let found: ScopeVar[] | null = null;
   const trigger = flow.trigger;
-  const base: ScopeVar[] = trigger ? [{ name: 'trigger', kind: 'record', fields: (trigger.config['parameters'] ?? []).map((p: any) => p.name).filter((n: string) => n), source: trigger.name }] : [];
+  const base: ScopeVar[] = trigger ? triggerVars(trigger, tables) : [];
   if (trigger?.id === targetId) return [];
   const walk = (steps: FlowNode[], scope: ScopeVar[]): void => {
     const local = [...scope];
@@ -152,6 +152,33 @@ export function variablesBefore(flow: FlowDefinition, targetId: string, tables: 
   walk(flow.steps, base);
   if (!found) walk(flow.globalFaultHandler, [...base, { name: 'fault', kind: 'record', fields: ['code', 'message', 'nodeId'], source: 'fault' }]);
   return found ?? result;
+}
+/** Variables a Start trigger provides: $trigger (parameters) and, for an Application endpoint with a body, $request. */
+export function triggerVars(trigger: FlowNode, tables: TableFinder): ScopeVar[] {
+  const c = trigger.config ?? {};
+  const params = c['mode'] === 'rest' ? (c['endpoint']?.parameters ?? []) : (c['parameters'] ?? []);
+  const vars: ScopeVar[] = [{ name: 'trigger', kind: 'record', fields: params.map((p: any) => p.name).filter((n: string) => n), source: trigger.name }];
+  const req = c['mode'] === 'rest' ? c['endpoint']?.request : null;
+  if (req?.system && req?.table) vars.push({ name: 'request', kind: 'record', table: tables(req.system, req.table), system: req.system, source: trigger.name });
+  return vars;
+}
+/** Whether a lane sits inside a fault handler and/or a loop body, so + only offers actions valid there. */
+export function laneContext(flow: FlowDefinition, lane: Lane): { inFault: boolean; inLoop: boolean } {
+  if (lane.kind === 'fault') return { inFault: true, inLoop: false };
+  if (lane.kind === 'root') return { inFault: false, inLoop: false };
+  const all = lanes(flow);
+  let entry = all.find(l => l.branch?.id === lane.branchId);
+  let inFault = false, inLoop = false;
+  while (entry && entry.branch && entry.owner) {
+    if (entry.branch.kind === 'faultHandler') inFault = true;
+    if ((entry.owner.type === 'forEach' || entry.owner.type === 'while') && entry.branch.kind === 'body') inLoop = true;
+    const ownerId = entry.owner.id;
+    const parent = all.find(l => l.steps.some(n => n.id === ownerId));
+    if (!parent) break;
+    if (parent.lane.kind === 'fault') inFault = true;
+    entry = parent.branch ? parent : undefined;
+  }
+  return { inFault, inLoop };
 }
 export const fieldsOf = (v: ScopeVar): string[] => v.table?.columns.map((c: ColumnDef) => c.name) ?? v.fields ?? [];
 

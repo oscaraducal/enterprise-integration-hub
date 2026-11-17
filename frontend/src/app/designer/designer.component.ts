@@ -6,12 +6,28 @@ import { Api, ApiError, SessionEnded, errorText } from '../api';
 import { ModalComponent } from '../ui';
 import { SystemId, TableView, loadTables } from '../systems';
 import {
-  ActionDef, CATEGORY_ORDER, Catalog, FlowDefinition, FlowNode, FlowReport, ICONS, Lane, allNodes, clone, cloneWithNewIds, createNode,
-  descendants, findNode, laneKey, locate, stepsOf, variablesBefore
+  ActionDef, CATEGORY_ORDER, Catalog, FlowDefinition, FlowNode, FlowReport, ICONS, Lane, allNodes, clone, cloneWithNewIds, createNode, uniqueName,
+  descendants, findNode, laneContext, laneKey, locate, stepsOf, variablesBefore
 } from './flow-model';
 import { NodePropertiesComponent } from './properties.component';
+import { EndpointWizardComponent, InvokeEndpoint, TriggerEndpoint } from './endpoint-wizard.component';
+import { ConnectionView, toIdentifier } from '../connections.component';
 
-interface FlowSummary { name: string; title: string; description?: string; draftRevision: number; draftUpdatedAt: string; draftUpdatedBy: string; latestVersion: number; status: string }
+interface FlowSummary { name: string; title: string; description?: string; draftRevision: number; draftUpdatedAt: string; draftUpdatedBy: string; latestVersion: number; status: string;
+  style: string; identifier: string; versionLabel: string; tags: string[] }
+interface Current { name: string; title: string; description?: string; revision: number; versions: VersionInfo[]; style: string; identifier: string; versionLabel: string; tags: string[] }
+interface PickerItem { key: string; label: string; description: string; icon: string; reason: string; def?: ActionDef; connection?: string }
+type Layout = 'Vertical' | 'Horizontal' | 'Outline';
+const LAYOUT_KEY = 'eih.designer.layout';
+const PICKER_TABS = ['Connections / Invokes', 'Data Processing', 'Logic', 'Error Handling', 'End Actions'] as const;
+const PICKER_TYPES: Record<string, string[]> = {
+  'Data Processing': ['assign', 'map', 'stageFile', 'logger', 'note', 'wait', 'dataStitch', 'dataTranslate'],
+  'Logic': ['switch', 'forEach', 'while', 'scope', 'parallel'],
+  'Error Handling': ['throwFault', 'rethrowFault'],
+  'End Actions': ['return', 'faultReturn', 'stop', 'callback'],
+};
+const END_TYPES = ['return', 'faultReturn', 'stop', 'callback'];
+const PURPOSE_LABEL: Record<string, string> = { explicit: 'Map', invokeRequest: 'Request mapping', invokeResponse: 'Response mapping', triggerResponse: 'Trigger response mapping', stageFile: 'File structure mapping' };
 interface VersionInfo { version: number; title: string; publishedAt: string; publishedBy: string; nodeCount: number }
 const HISTORY_LIMIT = 100;
 
@@ -21,7 +37,7 @@ const HISTORY_LIMIT = 100;
  * and versioned on the server; execution arrives in Milestone D.
  */
 @Component({
-  selector: 'app-designer', standalone: true, imports: [CommonModule, FormsModule, MatButtonModule, ModalComponent, NodePropertiesComponent],
+  selector: 'app-designer', standalone: true, imports: [CommonModule, FormsModule, MatButtonModule, ModalComponent, NodePropertiesComponent, EndpointWizardComponent],
   template: `
   <div class="designer" [class.fullscreen]="fullscreen()">
     <header class="designer-bar" role="toolbar" aria-label="Designer toolbar">
@@ -30,7 +46,7 @@ const HISTORY_LIMIT = 100;
         <select id="flowSelect" aria-label="Flow" [ngModel]="current()?.name ?? ''" (ngModelChange)="requestOpen($event)">
           <option value="" disabled>{{flows().length ? 'Choose a flow…' : 'No flows yet'}}</option>
           @for (f of flows(); track f.name) { <option [value]="f.name">{{f.title}} ({{f.name}})</option> }</select>
-        @if (api().operator()) { <button mat-stroked-button (click)="newFlow.set({ name: '', title: '', description: '', template: 'customer-sync' })">+ New flow</button>
+        @if (api().operator()) { <button mat-stroked-button (click)="startCreate()">+ New integration</button>
           <button mat-button (click)="fileInput.click()">Import</button><input #fileInput type="file" accept=".json,application/json" hidden (change)="importFile($event)"> }
       </div>
       @if (current(); as c) {
@@ -44,7 +60,8 @@ const HISTORY_LIMIT = 100;
           <button type="button" class="tool" (click)="deleteSelected()" [disabled]="!selectedMovable() || readOnly()" title="Delete (Del)" aria-label="Delete action">🗑</button>
         </div>
         <div class="tool-group" aria-label="View">
-          <button type="button" class="tool" (click)="setZoom(zoom() - 0.1)" aria-label="Zoom out">−</button>
+          <div class="layout-switch" role="radiogroup" aria-label="Layout">@for (l of layouts; track l) { <button type="button" role="radio" [attr.aria-checked]="layout() === l" [class.active]="layout() === l" (click)="setLayout(l)">{{l}}</button> }</div>
+          <button type="button" class="tool" (click)="setZoom(zoom() - 0.1)" aria-label="Zoom out" [disabled]="layout() === 'Outline'">−</button>
           <button type="button" class="tool zoom-label" (click)="setZoom(1)" aria-label="Reset zoom">{{zoom() * 100 | number:'1.0-0'}}%</button>
           <button type="button" class="tool" (click)="setZoom(zoom() + 0.1)" aria-label="Zoom in">+</button>
           <button type="button" class="tool" (click)="fit()" aria-label="Fit to screen" title="Fit to screen">⤢</button>
@@ -83,22 +100,27 @@ const HISTORY_LIMIT = 100;
         </aside>
 
         <section class="canvas-wrap" #canvasWrap aria-label="Flow canvas" (click)="select(null)">
-          <div class="canvas" #canvas [style.transform]="'scale(' + zoom() + ')'">
+          @if (layout() === 'Outline') { <ng-container *ngTemplateOutlet="outline"></ng-container> } @else {
+          <div class="canvas" #canvas [class.horizontal]="layout() === 'Horizontal'" [style.transform]="'scale(' + zoom() + ')'">
             <div class="flow-title"><input aria-label="Flow title" class="title-input" [ngModel]="c.title" (ngModelChange)="setTitle($event)" [disabled]="readOnly()" maxlength="80" (click)="$event.stopPropagation()">
-              <small class="muted">{{c.name}} · {{c.versions.length ? 'published v' + c.versions[0].version : 'never published'}} · draft rev {{c.revision}}</small></div>
+              <small class="muted">{{c.identifier}} · {{c.versionLabel}} · {{styleLabel(c.style)}} · {{c.versions.length ? 'published v' + c.versions[0].version : 'never published'}} · draft rev {{c.revision}}</small></div>
+            <div class="flow-line">
             @if (flow().trigger; as t) { <ng-container *ngTemplateOutlet="card; context: { $implicit: t }"></ng-container> }
             <ng-container *ngTemplateOutlet="seq; context: { $implicit: flow().steps, lane: { kind: 'root' } }"></ng-container>
+            </div>
             <div class="lane fault-lane">
               <button type="button" class="lane-toggle" (click)="$event.stopPropagation(); showFault.set(!showFault())" [attr.aria-expanded]="showFault()">
                 {{showFault() ? '▾' : '▸'}} Global fault handler ({{flow().globalFaultHandler.length}})</button>
               @if (showFault()) { <ng-container *ngTemplateOutlet="seq; context: { $implicit: flow().globalFaultHandler, lane: { kind: 'fault' } }"></ng-container> }
             </div>
           </div>
+          }
         </section>
 
         <aside class="properties" aria-label="Properties">
           <app-node-properties [api]="api()" [node]="selectedNode()" [def]="selectedDef()" [variables]="scopeVars()" [functions]="catalog()?.functions ?? []"
-            [catalogs]="tables()" [issues]="selectedIssues()" [readOnly]="readOnly()" (changed)="updateNode($event)"></app-node-properties>
+            [catalogs]="tables()" [issues]="selectedIssues()" [readOnly]="readOnly()" [connections]="connections()" (changed)="updateNode($event)"
+            (editEndpoint)="editEndpoint($event)" (configureTrigger)="configureTrigger()" (addMapping)="addMapping($event)"></app-node-properties>
         </aside>
       </div>
 
@@ -130,7 +152,7 @@ const HISTORY_LIMIT = 100;
     } @else {
       <section class="panel empty-designer"><h2>Integration Designer</h2>
         <p class="muted">Design integrations visually from a palette of actions: invoke the fictional applications, assign variables, map fields, branch, loop and stage files. Designs are validated and versioned; running them arrives in Milestone D.</p>
-        @if (api().operator()) { <button mat-flat-button (click)="newFlow.set({ name: 'customer-sync', title: 'Customer master sync', description: '', template: 'customer-sync' })">Create your first flow</button> }
+        @if (api().operator()) { <button mat-flat-button (click)="startCreate()">Create your first integration</button> }
         @else { <p class="hint">Sign in as Operator to create flows.</p> }</section>
     }
   </div>
@@ -145,8 +167,11 @@ const HISTORY_LIMIT = 100;
     </ol>
   </ng-template>
   <ng-template #slot let-lane="lane" let-index="index">
-    <div class="slot" [class.active]="dropKey() === key(lane, index)" (dragover)="allowDrop($event, lane, index)" (dragleave)="dropKey.set('')" (drop)="dropOn($event, lane, index)"
-      [attr.data-slot]="key(lane, index)" aria-hidden="true"><span>+</span></div>
+    <div class="slot" [class.active]="dropKey() === key(lane, index) || pickerKey() === key(lane, index)" (dragover)="allowDrop($event, lane, index)" (dragleave)="dropKey.set('')" (drop)="dropOn($event, lane, index)"
+      [attr.data-slot]="key(lane, index)">
+      @if (!readOnly()) { <button type="button" class="slot-btn" (click)="$event.stopPropagation(); openPicker(lane, index)" [attr.aria-expanded]="pickerKey() === key(lane, index)" [attr.aria-label]="'Insert action at ' + slotLabel(lane, index)">+</button> }
+      @else { <span aria-hidden="true">+</span> }</div>
+    @if (pickerKey() === key(lane, index)) { <ng-container *ngTemplateOutlet="picker; context: { lane: lane, index: index }"></ng-container> }
   </ng-template>
   <ng-template #card let-node>
     <div class="node" [class]="'node type-' + node.type" [class.selected]="selectedId() === node.id" [class.match]="isMatch(node)" [class.error]="nodeErrors(node.id) > 0"
@@ -157,6 +182,10 @@ const HISTORY_LIMIT = 100;
         @if (nodeErrors(node.id)) { <span class="badge err" aria-hidden="true">{{nodeErrors(node.id)}}</span> }
         @else if (nodeWarnings(node.id)) { <span class="badge warn" aria-hidden="true">!</span> }
       </button>
+      @if (node.type === 'trigger' && triggerNeedsSetup(node)) {
+        <div class="trigger-setup"><p>Choose a Trigger connection and define the inbound REST endpoint.</p>
+          @if (!readOnly()) { <button mat-stroked-button type="button" (click)="$event.stopPropagation(); configureTrigger()">Configure trigger…</button> }</div>
+      }
       @if (node.branches?.length) {
         <button type="button" class="collapse" (click)="$event.stopPropagation(); toggle(node.id)" [attr.aria-expanded]="!collapsed().has(node.id)" [attr.aria-label]="(collapsed().has(node.id) ? 'Expand ' : 'Collapse ') + node.name">{{collapsed().has(node.id) ? '▸ ' + countInside(node) + ' inside' : '▾'}}</button>
         @if (!collapsed().has(node.id)) {
@@ -173,16 +202,77 @@ const HISTORY_LIMIT = 100;
     </div>
   </ng-template>
 
-  @if (newFlow(); as f) {
-    <app-modal label="New flow" heading="New integration flow" eyebrow="INTEGRATION DESIGNER" (close)="newFlow.set(null)">
-      <form class="form-grid modal-form" (ngSubmit)="createFlow()">
-        <label>Name (URL-safe)<input name="fn" [(ngModel)]="f.name" maxlength="60" placeholder="customer-sync" required class="mono"></label>
-        <label>Title<input name="ft" [(ngModel)]="f.title" maxlength="80" required></label>
-        <label>Start from<select name="ftpl" [(ngModel)]="f.template">@for (t of catalog()?.templates ?? []; track t.id) { <option [value]="t.id">{{t.title}}</option> }</select></label>
-        <p class="hint full">{{templateText(f.template)}}</p>
-        @if (formError()) { <p class="inline-warning flat" role="alert">{{formError()}}</p> }
-        <div class="form-actions"><button mat-flat-button type="submit" [disabled]="busy()">Create flow</button><button mat-button type="button" (click)="newFlow.set(null)">Cancel</button></div>
-      </form>
+  <ng-template #picker let-lane="lane" let-index="index">
+    <div class="picker" role="dialog" [attr.aria-label]="'Insert action at ' + slotLabel(lane, index)" (click)="$event.stopPropagation()" (keydown.escape)="pickerKey.set('')">
+      <div class="picker-head"><div class="tabs" role="tablist" aria-label="Action categories">@for (t of pickerTabs; track t) { <button type="button" role="tab" [attr.aria-selected]="pickerTab() === t" [class.active]="pickerTab() === t" (click)="pickerTab.set(t)">{{t}}</button> }</div>
+        <button type="button" class="link-button" (click)="pickerKey.set('')" aria-label="Close action picker">Close</button></div>
+      <ul class="picker-list">
+        @for (item of pickerItems(lane, index); track item.key) {
+          <li><button type="button" [disabled]="!!item.reason" (click)="pick(item, lane, index)" [attr.aria-label]="item.label + (item.reason ? ' (unavailable)' : '')">
+            <span class="icon" aria-hidden="true">{{item.icon}}</span><span><b>{{item.label}}</b><small>{{item.reason || item.description}}</small></span></button></li>
+        } @empty { <li class="hint">{{pickerTab() === 'Connections / Invokes' ? 'No Invoke connections yet. Create one in the Connections workspace.' : 'Nothing here.'}}</li> }
+      </ul>
+    </div>
+  </ng-template>
+  <ng-template #outline>
+    <div class="outline" role="tree" aria-label="Flow outline">
+      <div class="outline-head" aria-hidden="true"><span>Action</span><span>Type</span><span>Connection / operation</span><span>Schema</span><span>Mapping</span><span>Validation</span><span>Summary</span></div>
+      @for (r of outlineRows(); track r.node.id) {
+        <div class="outline-row" role="treeitem" [attr.aria-level]="r.depth + 1" [attr.aria-expanded]="r.node.branches.length ? !collapsed().has(r.node.id) : null" [attr.aria-selected]="selectedId() === r.node.id"
+          [class.selected]="selectedId() === r.node.id" [class.match]="isMatch(r.node)" [attr.data-node-id]="r.node.id">
+          <span class="o-name" [style.padding-left.px]="r.depth * 18">
+            @if (r.node.branches.length) { <button type="button" class="o-toggle" (click)="toggle(r.node.id)" [attr.aria-label]="(collapsed().has(r.node.id) ? 'Expand ' : 'Collapse ') + r.node.name">{{collapsed().has(r.node.id) ? '▸' : '▾'}}</button> }
+            <button type="button" class="o-select" (click)="select(r.node.id)" [attr.aria-label]="'Outline ' + label(r.node)">{{r.branch ? r.branch + ' · ' : ''}}<b>{{r.node.name}}</b></button></span>
+          <span>{{typeLabel(r.node)}}</span><span>{{connectionText(r.node)}}</span><span>{{schemaText(r.node)}}</span><span>{{mappingText(r.node)}}</span>
+          <span>@if (nodeErrors(r.node.id)) { <b class="field-error">{{nodeErrors(r.node.id)}} error(s)</b> } @else if (nodeWarnings(r.node.id)) { <span class="field-warning">{{nodeWarnings(r.node.id)}} warning(s)</span> } @else { <span class="ok-text">OK</span> }</span>
+          <span class="o-summary">{{r.node.description || summary(r.node)}}</span>
+        </div>
+      }
+    </div>
+  </ng-template>
+  @if (create(); as w) {
+    <app-modal label="New integration" heading="Create integration" [eyebrow]="'STEP ' + (createStep() + 1) + ' OF 3 · ' + createStepNames[createStep()].toUpperCase()" [wide]="true" (close)="create.set(null)">
+      <ol class="wizard-steps" aria-label="Wizard steps">@for (s of createStepNames; track s; let i = $index) { <li [class.done]="i < createStep()" [class.current]="i === createStep()">{{i + 1}}. {{s}}</li> }</ol>
+      @switch (createStep()) {
+        @case (0) {
+          <div class="choice-grid" role="radiogroup" aria-label="Integration type">
+            @for (st of styleChoices; track st.id) { <button type="button" role="radio" class="choice" [class.selected]="w.style === st.id" [attr.aria-checked]="w.style === st.id" (click)="w.style = st.id; w.template = 'blank'"><b>{{st.title}}</b><small>{{st.text}}</small></button> }
+          </div>
+        }
+        @case (1) {
+          <div class="form-grid modal-form">
+            <label>Name<input aria-label="Integration name" [ngModel]="w.title" (ngModelChange)="setCreateName(w, $event)" maxlength="80"></label>
+            <label>Identifier<input aria-label="Integration identifier" class="mono" [ngModel]="w.identifier" (ngModelChange)="setCreateId(w, $event)" maxlength="50"></label>
+            <label>Version<input aria-label="Integration version" class="mono" [(ngModel)]="w.version" maxlength="10" placeholder="01.00.0000"></label>
+            <label>Tags (comma separated)<input aria-label="Tags" [(ngModel)]="w.tags" maxlength="200" placeholder="crm, practice"></label>
+            <label class="full">Description<input aria-label="Integration description" [(ngModel)]="w.description" maxlength="300"></label>
+          </div><p class="hint">The identifier is generated from the name in upper case. The version uses xx.xx.xxxx (default 01.00.0000).</p>
+        }
+        @case (2) {
+          <div class="choice-grid" role="radiogroup" aria-label="Start from">
+            <button type="button" role="radio" class="choice" [class.selected]="w.template === 'blank'" [attr.aria-checked]="w.template === 'blank'" (click)="w.template = 'blank'"><b>Blank (recommended)</b><small>{{blankText(w.style)}}</small></button>
+            @for (t of starterTemplates(); track t.id) { <button type="button" role="radio" class="choice" [class.selected]="w.template === t.id" [attr.aria-checked]="w.template === t.id" [disabled]="w.style !== 'manual'" (click)="w.template = t.id"
+              [attr.aria-label]="'Starter template: ' + t.title"><b>{{t.title}}</b><small>{{w.style === 'manual' ? t.description : 'Starter templates use a manual trigger: choose Manual practice to use them.'}}</small></button> }
+          </div>
+          <dl class="record-dl"><dt>Type</dt><dd>{{styleLabel(w.style)}}</dd><dt>Name</dt><dd>{{w.title}}</dd><dt>Identifier</dt><dd><code>{{w.identifier}}</code> · {{w.version}}</dd></dl>
+        }
+      }
+      @if (formError()) { <p class="inline-warning flat" role="alert">{{formError()}}</p> }
+      <div class="form-actions wizard-nav"><button mat-button (click)="createStep.set(createStep() - 1)" [disabled]="createStep() === 0">Back</button>
+        @if (createStep() < 2) { <button mat-flat-button (click)="createStep.set(createStep() + 1)" [disabled]="!createReady()">Next</button> }
+        @else { <button mat-flat-button (click)="createIntegration()" [disabled]="busy()">Create</button> }
+        <button mat-button (click)="create.set(null)">Cancel</button></div>
+    </app-modal>
+  }
+  @if (wizard(); as wz) {
+    <app-endpoint-wizard [api]="api()" [mode]="wz.mode" [actionName]="wz.name" [connections]="connections()" [catalogs]="tables()" [variables]="wz.variables"
+      [functions]="catalog()?.functions ?? []" [initial]="wz.initial" (done)="endpointDone($event)"></app-endpoint-wizard>
+  }
+  @if (impact(); as im) {
+    <app-modal label="Mapping impact" heading="This change affects a mapping" eyebrow="CONFIRM" (close)="impact.set(null)">
+      <p>{{im.message}}</p><p class="hint">Mapping rules are never deleted automatically. Rules that no longer fit are reported in Problems until you review them, and publishing stays blocked until the flow is valid.</p>
+      <div class="form-actions">@for (o of im.options; track o.label) { <button mat-stroked-button (click)="o.apply(); impact.set(null)">{{o.label}}</button> }
+        <button mat-button (click)="impact.set(null)">Cancel</button></div>
     </app-modal>
   }
   @if (importDoc(); as d) {
@@ -212,7 +302,7 @@ export class DesignerComponent implements OnInit, OnDestroy {
   catalog = signal<Catalog | null>(null);
   tables = signal<Record<SystemId, TableView[]>>({ crm: [], erp: [] });
   flows = signal<FlowSummary[]>([]);
-  current = signal<{ name: string; title: string; description?: string; revision: number; versions: VersionInfo[] } | null>(null);
+  current = signal<Current | null>(null);
   flow = signal<FlowDefinition>({ schemaVersion: 1, trigger: null, steps: [], globalFaultHandler: [] });
   report = signal<FlowReport | null>(null);
   undoStack = signal<string[]>([]); redoStack = signal<string[]>([]);
@@ -221,7 +311,21 @@ export class DesignerComponent implements OnInit, OnDestroy {
   zoom = signal(1); search = signal(''); fullscreen = signal(false); showFault = signal(true);
   collapsed = signal<Set<string>>(new Set()); dropKey = signal('');
   bottomTab = signal<'Problems' | 'Variables' | 'Versions' | 'JSON' | 'Execution'>('Problems');
-  newFlow = signal<{ name: string; title: string; description: string; template: string } | null>(null);
+  readonly layouts: Layout[] = ['Vertical', 'Horizontal', 'Outline'];
+  readonly pickerTabs = PICKER_TABS;
+  readonly createStepNames = ['Integration type', 'Basic information', 'Create'];
+  readonly styleChoices = [
+    { id: 'application', title: 'Application', text: 'Starts when an application calls an inbound REST endpoint. Start is a trigger placeholder until you choose a Trigger connection.' },
+    { id: 'schedule', title: 'Scheduled', text: 'Starts on a schedule (manual, daily, weekly or monthly) with schedule parameters. Design-time only in this release.' },
+    { id: 'manual', title: 'Manual practice', text: 'A simplified practice mode with a built-in manual trigger and typed sample parameters. Starter templates are available.' },
+  ];
+  layout = signal<Layout>(this.storedLayout());
+  connections = signal<ConnectionView[]>([]);
+  pickerKey = signal(''); pickerTab = signal<typeof PICKER_TABS[number]>('Data Processing');
+  create = signal<{ style: string; title: string; identifier: string; idEdited: boolean; version: string; tags: string; description: string; template: string } | null>(null);
+  createStep = signal(0);
+  wizard = signal<{ mode: 'invoke' | 'trigger'; name: string; nodeId?: string; lane?: Lane; index?: number; initial: Record<string, any> | null; variables: any[] } | null>(null);
+  impact = signal<{ message: string; options: { label: string; apply: () => void }[] } | null>(null);
   importDoc = signal<{ doc: any; name: string } | null>(null);
   pendingOpen = signal<{ action: 'open' | 'version'; target: string } | null>(null);
   private validateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -244,6 +348,7 @@ export class DesignerComponent implements OnInit, OnDestroy {
       const [catalog, crm, erp, flows] = await Promise.all([this.api().request<Catalog>('flows/actions'), loadTables(this.api(), 'crm'),
         loadTables(this.api(), 'erp'), this.api().request<FlowSummary[]>('flows')]);
       this.catalog.set(catalog); this.tables.set({ crm, erp }); this.flows.set(flows);
+      try { this.connections.set(await this.api().request<ConnectionView[]>('connections')); } catch { /* connections are optional for viewing */ }
       if (flows.length) await this.open(flows[0].name);
     } catch (e) { this.fail(e); }
   }
@@ -263,8 +368,8 @@ export class DesignerComponent implements OnInit, OnDestroy {
   async open(name: string) {
     this.busy.set(true); this.error.set(''); this.conflict.set(false);
     try {
-      const f = await this.api().request<{ name: string; title: string; description?: string; revision: number; definition: FlowDefinition; versions: VersionInfo[]; report: FlowReport }>('flows/' + encodeURIComponent(name));
-      this.current.set({ name: f.name, title: f.title, description: f.description, revision: f.revision, versions: f.versions });
+      const f = await this.api().request<Current & { definition: FlowDefinition; report: FlowReport }>('flows/' + encodeURIComponent(name));
+      this.current.set({ name: f.name, title: f.title, description: f.description, revision: f.revision, versions: f.versions, style: f.style, identifier: f.identifier, versionLabel: f.versionLabel, tags: f.tags });
       this.flow.set(this.normalize(f.definition)); this.report.set(f.report);
       this.undoStack.set([]); this.redoStack.set([]); this.dirty.set(false); this.selectedId.set(null); this.collapsed.set(new Set());
     } catch (e) { this.fail(e); } finally { this.busy.set(false); }
@@ -276,16 +381,34 @@ export class DesignerComponent implements OnInit, OnDestroy {
     if (d.trigger) fix(d.trigger); d.steps.forEach(fix); d.globalFaultHandler.forEach(fix);
     return d;
   }
-  async createFlow() {
-    const f = this.newFlow(); if (!f) return;
+  // ----------------------------------------------------------- create integration wizard
+  startCreate() {
+    this.formError.set(''); this.createStep.set(0);
+    this.create.set({ style: 'application', title: '', identifier: '', idEdited: false, version: '01.00.0000', tags: '', description: '', template: 'blank' });
+  }
+  setCreateName(w: { title: string; identifier: string; idEdited: boolean }, title: string) { w.title = title; if (!w.idEdited) w.identifier = toIdentifier(title); }
+  setCreateId(w: { identifier: string; idEdited: boolean }, id: string) { w.identifier = id.toUpperCase(); w.idEdited = true; }
+  createReady() {
+    const w = this.create(); if (!w) return false;
+    return this.createStep() === 0 ? !!w.style : !!w.title.trim() && /^[A-Z][A-Z0-9_]{1,49}$/.test(w.identifier) && /^\d{2}\.\d{2}\.\d{4}$/.test(w.version);
+  }
+  starterTemplates() { return (this.catalog()?.templates ?? []).filter(t => t.id !== 'blank'); }
+  styleLabel(style?: string) { return style === 'application' ? 'Application' : style === 'schedule' ? 'Scheduled' : 'Manual practice'; }
+  blankText(style: string) {
+    return style === 'application' ? 'Only an unconfigured Start trigger. Choose a Trigger connection, then add actions with +.'
+      : style === 'schedule' ? 'Only a Start schedule (manual run by default). Add actions with +.' : 'Only a manual Start trigger. Add actions with +.';
+  }
+  async createIntegration() {
+    const w = this.create(); if (!w) return;
     this.busy.set(true); this.formError.set('');
     try {
-      await this.api().request('flows', 'POST', { name: f.name.trim(), title: f.title.trim(), description: f.description || null, template: f.template });
-      this.newFlow.set(null); await this.loadFlows(); await this.open(f.name.trim());
-      this.notice.set(`Flow "${f.title}" created as a draft.`);
+      const r = await this.api().request<{ name: string }>('flows', 'POST', { title: w.title.trim(), identifier: w.identifier, versionLabel: w.version, style: w.style,
+        description: w.description || null, tags: w.tags.split(',').map(t => t.trim()).filter(t => t), template: w.template });
+      this.create.set(null); await this.loadFlows(); await this.open(r.name);
+      this.notice.set(w.template === 'blank' ? `Integration "${w.title}" created with an empty canvas. Use + to add actions.` : `Integration "${w.title}" created from a starter template.`);
+      if (w.style === 'application' && w.template === 'blank') this.select(this.flow().trigger?.id ?? null);
     } catch (e) { if (!(e instanceof SessionEnded)) this.formError.set(errorText(e)); } finally { this.busy.set(false); }
   }
-  templateText(id: string) { const t = this.catalog()?.templates.find(x => x.id === id); return t ? `${t.description} (${t.scenario})` : ''; }
   async save() {
     const c = this.current(); if (!c) return;
     this.busy.set(true); this.error.set('');
@@ -397,7 +520,9 @@ export class DesignerComponent implements OnInit, OnDestroy {
       target.branches = updated.branches.map(b => ({ ...b, steps: stepsById.get(b.id) ?? [] }));
     }, 'node:' + updated.id);
   }
-  insert(def: ActionDef, lane: Lane, index: number) {
+  /** Invokes are configured through the endpoint wizard before they are inserted; other actions are inserted directly. */
+  insert(def: ActionDef, lane: Lane, index: number, initial: Record<string, any> | null = null) {
+    if (def.type === 'invoke') { this.openInvokeWizard(lane, index, initial); return; }
     let createdId = '';
     this.commit(draft => {
       const steps = stepsOf(draft, lane); if (!steps) return;
@@ -451,6 +576,211 @@ export class DesignerComponent implements OnInit, OnDestroy {
     if (pastedId) this.selectedId.set(pastedId);
   }
 
+  // ----------------------------------------------------------- inline + picker
+  openPicker(lane: Lane, index: number) {
+    const k = this.key(lane, index);
+    this.pickerKey.set(this.pickerKey() === k ? '' : k);
+    setTimeout(() => (document.querySelector('.picker [role=tab][aria-selected=true]') as HTMLElement | null)?.focus());
+  }
+  slotLabel(lane: Lane, index: number) {
+    const where = lane.kind === 'root' ? 'main flow' : lane.kind === 'fault' ? 'global fault handler'
+      : (this.allBranches().find(b => b.id === lane.branchId)?.label ?? 'branch');
+    return `${where}, position ${index + 1}`;
+  }
+  private allBranches() { return allNodes(this.flow()).flatMap(n => n.branches ?? []); }
+  /** Actions offered at a slot, with the reason when one cannot go there. */
+  pickerItems(lane: Lane, index: number): PickerItem[] {
+    const tab = this.pickerTab();
+    if (tab === 'Connections / Invokes') {
+      const invokers = this.connections().filter(c => c.role === 'Invoke' || c.role === 'TriggerAndInvoke');
+      const generic = this.catalog()?.actions.find(a => a.type === 'invoke');
+      return [
+        ...invokers.map(c => ({ key: 'c:' + c.identifier, label: `Invoke ${c.name}`, description: `${c.applicationName} · ${c.identifier}`, icon: '⇄', reason: '', connection: c.identifier })),
+        ...(generic ? [{ key: 'invoke', label: 'Invoke (choose connection)', description: 'Opens the endpoint wizard.', icon: '⇄', reason: invokers.length ? '' : 'Create a connection with the Invoke role first (Connections workspace).', def: generic }] : []),
+      ];
+    }
+    const ctx = laneContext(this.flow(), lane);
+    const steps = stepsOf(this.flow(), lane) ?? [];
+    return (PICKER_TYPES[tab] ?? []).map(t => this.catalog()?.actions.find(a => a.type === t)).filter((a): a is ActionDef => !!a).map(a => {
+      let reason = '';
+      if (a.status === 'Planned') reason = `Planned (${a.planned}). Not available in this release.`;
+      else if (a.type === 'rethrowFault' && !ctx.inFault) reason = 'Only inside a fault handler (Scope fault handler or the global fault handler).';
+      else if (END_TYPES.includes(a.type) && index < steps.length) reason = 'End actions go at the end of a path; the actions after this position would become unreachable.';
+      return { key: a.type, label: a.label, description: a.description, icon: this.icon(a.type), reason, def: a };
+    });
+  }
+  pick(item: PickerItem, lane: Lane, index: number) {
+    if (item.reason) return;
+    this.pickerKey.set('');
+    if (item.connection) this.openInvokeWizard(lane, index, { connection: item.connection });
+    else if (item.def) this.insert(item.def, lane, index);
+  }
+
+  // ----------------------------------------------------------- endpoint wizards and mapping points
+  private tableFinder = (s: string, t: string) => this.tables()[s as SystemId]?.find(x => x.name === t) ?? null;
+  /** Variables in scope at an insertion point, computed by placing a temporary marker there. */
+  private varsAt(lane: Lane, index: number) {
+    const draft = clone(this.flow()); const steps = stepsOf(draft, lane); if (!steps) return [];
+    steps.splice(index, 0, { id: '__marker__', type: 'note', name: '__marker__', config: {}, branches: [] });
+    return variablesBefore(draft, '__marker__', this.tableFinder);
+  }
+  openInvokeWizard(lane: Lane, index: number, initial: Record<string, any> | null) {
+    const name = uniqueName(this.flow(), 'callApi');
+    this.wizard.set({ mode: 'invoke', name, lane, index, initial, variables: this.varsAt(lane, index) });
+  }
+  editEndpoint(nodeId: string) {
+    const node = findNode(this.flow(), nodeId); if (!node) return;
+    this.wizard.set({ mode: 'invoke', name: node.name, nodeId, initial: clone(node.config), variables: variablesBefore(this.flow(), nodeId, this.tableFinder) });
+  }
+  configureTrigger() {
+    const t = this.flow().trigger; if (!t) return;
+    this.wizard.set({ mode: 'trigger', name: t.name, nodeId: t.id, initial: clone(t.config), variables: [] });
+  }
+  triggerNeedsSetup(n: FlowNode) { return n.config?.['mode'] === 'rest' && (!n.config['connection'] || !n.config['endpoint']); }
+  private invokeConfig(ep: InvokeEndpoint, keepInput?: string) {
+    const c: Record<string, any> = { connection: ep.connection, operationId: ep.operationId, system: ep.system, table: ep.table, operation: ep.operation, method: ep.method, path: ep.path };
+    if (ep.key !== undefined) c['key'] = ep.key;
+    if (ep.limit !== undefined) c['limit'] = ep.limit;
+    if (ep.requestBody && keepInput) c['input'] = keepInput;
+    return c;
+  }
+  private newMap(draft: FlowDefinition, base: string, config: Record<string, any>) {
+    const def = this.catalog()!.actions.find(a => a.type === 'map')!;
+    const map = createNode(draft, def); map.name = uniqueName(draft, base); map.config = { rules: [], ...config };
+    return map;
+  }
+  endpointDone(result: InvokeEndpoint | TriggerEndpoint | null) {
+    const wz = this.wizard(); this.wizard.set(null);
+    if (!result || !wz) return;
+    if (wz.mode === 'trigger') this.applyTrigger(result as TriggerEndpoint);
+    else if (wz.nodeId) this.reconfigureInvoke(wz.nodeId, result as InvokeEndpoint);
+    else this.insertInvoke(wz.lane!, wz.index!, result as InvokeEndpoint, wz.name);
+  }
+  private insertInvoke(lane: Lane, index: number, ep: InvokeEndpoint, name: string) {
+    let invokeId = '', mapName = '';
+    this.commit(draft => {
+      const steps = stepsOf(draft, lane); if (!steps) return;
+      const node = createNode(draft, this.catalog()!.actions.find(a => a.type === 'invoke')!);
+      node.name = uniqueName(draft, name); node.config = this.invokeConfig(ep); invokeId = node.id;
+      steps.splice(index, 0, node);
+      if (ep.requestBody) {
+        // Mapping point: an unconfigured request mapping directly before the Invoke, targeting its request contract.
+        const map = this.newMap(draft, 'map' + node.name[0].toUpperCase() + node.name.slice(1) + 'Request',
+          { purpose: 'invokeRequest', for: node.id, input: '', targetSystem: ep.system, targetTable: ep.table });
+        steps.splice(index, 0, map); node.config['input'] = map.name; mapName = map.name;
+      }
+    });
+    if (invokeId) {
+      this.selectedId.set(invokeId);
+      this.notice.set(mapName ? `Invoke added with an unconfigured request mapping (${mapName}) before it. Open the mapping to map the fields.` : 'Invoke added. This operation sends no request body, so no mapping was added.');
+    }
+  }
+  /** Reconfiguring an Invoke never deletes mapping rules: affected request mappings are kept, retargeted only on confirmation. */
+  private reconfigureInvoke(nodeId: string, ep: InvokeEndpoint) {
+    const at = locate(this.flow(), nodeId); if (!at) return;
+    const node = at.steps[at.index]; const prev = at.steps[at.index - 1];
+    const reqMap = prev?.type === 'map' && prev.config['purpose'] === 'invokeRequest' && prev.config['for'] === nodeId ? prev : null;
+    const rules = (reqMap?.config['rules'] ?? []).length;
+    const apply = (opts: { retarget?: boolean; addMap?: boolean }) => this.commit(draft => {
+      const n = findNode(draft, nodeId); if (!n) return;
+      n.config = this.invokeConfig(ep, reqMap?.name ?? n.config['input']);
+      if (opts.retarget && reqMap) { const m = findNode(draft, reqMap.id)!; m.config['targetSystem'] = ep.system; m.config['targetTable'] = ep.table; }
+      if (opts.addMap) {
+        const loc = locate(draft, nodeId)!;
+        const map = this.newMap(draft, 'map' + n.name[0].toUpperCase() + n.name.slice(1) + 'Request', { purpose: 'invokeRequest', for: n.id, input: '', targetSystem: ep.system, targetTable: ep.table });
+        loc.steps.splice(loc.index, 0, map); n.config['input'] = map.name;
+      }
+    }, 'endpoint:' + nodeId);
+    if (ep.requestBody) {
+      if (!reqMap) { apply({ addMap: true }); this.notice.set('The new operation sends a request body: an unconfigured request mapping was added before the Invoke.'); }
+      else if (reqMap.config['targetSystem'] === ep.system && reqMap.config['targetTable'] === ep.table) apply({});
+      else this.impact.set({ message: `${reqMap.name} has ${rules} rule(s) for ${reqMap.config['targetSystem']}.${reqMap.config['targetTable']}, but the new operation expects ${ep.system}.${ep.table}.`,
+        options: [{ label: 'Retarget the mapping (keep its rules for review)', apply: () => apply({ retarget: true }) }, { label: 'Keep the mapping unchanged', apply: () => apply({}) }] });
+    } else if (reqMap) {
+      this.impact.set({ message: `${reqMap.name} (${rules} rule(s)) feeds ${node.name}, but ${ep.method} ${ep.path} sends no request body.`,
+        options: [{ label: 'Apply and keep the mapping for review', apply: () => apply({}) }] });
+    } else apply({});
+  }
+  private applyTrigger(t: TriggerEndpoint) {
+    const responseMaps = allNodes(this.flow()).filter(n => n.type === 'map' && n.config['purpose'] === 'triggerResponse');
+    const old = this.flow().trigger?.config['endpoint']?.response;
+    const changed = responseMaps.length && (old?.system !== t.endpoint.response?.system || old?.table !== t.endpoint.response?.table);
+    const apply = (retarget: boolean) => this.commit(draft => {
+      if (!draft.trigger) return;
+      draft.trigger.config = { mode: 'rest', connection: t.connection, endpoint: t.endpoint };
+      if (retarget && t.endpoint.response) for (const m of responseMaps) { const n = findNode(draft, m.id)!; n.config['targetSystem'] = t.endpoint.response.system; n.config['targetTable'] = t.endpoint.response.table; }
+    }, 'trigger');
+    if (changed) this.impact.set({ message: `The response schema changed and ${responseMaps.map(m => m.name).join(', ')} map to the old one.`,
+      options: [...(t.endpoint.response ? [{ label: 'Retarget the response mapping (keep its rules for review)', apply: () => apply(true) }] : []), { label: 'Keep the mapping unchanged', apply: () => apply(false) }] });
+    else { apply(false); this.notice.set(`Start trigger configured: ${t.endpoint.method} ${t.endpoint.path} (design-time only, not activated).`); }
+  }
+  /** Adds a mapping point next to the action it serves; it stays unconfigured until fields are mapped. */
+  addMapping(e: { kind: 'invokeResponse' | 'triggerResponse' | 'stageFile'; nodeId: string }) {
+    let createdId = '';
+    this.commit(draft => {
+      if (e.kind === 'triggerResponse') {
+        const res = draft.trigger?.config['endpoint']?.response; if (!res) return;
+        const map = this.newMap(draft, 'mapResponse', { purpose: 'triggerResponse', input: '', targetSystem: res.system, targetTable: res.table });
+        const i = draft.steps.length && END_TYPES.includes(draft.steps[draft.steps.length - 1].type) ? draft.steps.length - 1 : draft.steps.length;
+        draft.steps.splice(i, 0, map); createdId = map.id; return;
+      }
+      const at = locate(draft, e.nodeId); if (!at) return;
+      const node = at.steps[at.index];
+      if (e.kind === 'invokeResponse') {
+        const map = this.newMap(draft, 'map' + node.name[0].toUpperCase() + node.name.slice(1) + 'Response', { purpose: 'invokeResponse', for: node.id, input: node.name, targetSystem: 'erp', targetTable: '' });
+        at.steps.splice(at.index + 1, 0, map); createdId = map.id;
+      } else {
+        const map = this.newMap(draft, 'map' + node.name[0].toUpperCase() + node.name.slice(1) + 'Data', { purpose: 'stageFile', for: node.id, input: '', targetSystem: 'erp', targetTable: '' });
+        at.steps.splice(at.index, 0, map); node.config['input'] = map.name; createdId = map.id;
+      }
+    });
+    if (createdId) { this.selectedId.set(createdId); this.notice.set('Mapping added. Choose its source and target, then open the field mapper.'); }
+  }
+
+  // ----------------------------------------------------------- layouts and outline
+  private storedLayout(): Layout { try { const v = localStorage.getItem(LAYOUT_KEY); return v === 'Horizontal' || v === 'Outline' ? v : 'Vertical'; } catch { return 'Vertical'; } }
+  /** The presentation is a per-viewer preference; it never changes the flow definition. */
+  setLayout(l: Layout) { this.layout.set(l); try { localStorage.setItem(LAYOUT_KEY, l); } catch { /* preference only */ } }
+  outlineRows = computed(() => {
+    const rows: { node: FlowNode; depth: number; branch: string | null }[] = [];
+    const walk = (steps: FlowNode[], depth: number, branch: string | null) => steps.forEach((n, i) => {
+      rows.push({ node: n, depth, branch: i === 0 ? branch : null });
+      if (!this.collapsed().has(n.id)) for (const b of n.branches ?? []) walk(b.steps, depth + 1, b.label);
+    });
+    const t = this.flow().trigger; if (t) rows.push({ node: t, depth: 0, branch: null });
+    walk(this.flow().steps, 0, null);
+    walk(this.flow().globalFaultHandler, 0, 'Global fault handler');
+    return rows;
+  });
+  typeLabel(n: FlowNode) {
+    if (n.type === 'trigger') return n.config?.['mode'] === 'rest' ? 'Start · REST' : n.config?.['mode'] === 'schedule' ? 'Start · Schedule' : 'Start · Manual';
+    if (n.type === 'map') return PURPOSE_LABEL[n.config?.['purpose'] ?? 'explicit'] ?? 'Map';
+    return this.catalog()?.actions.find(a => a.type === n.type)?.label ?? n.type;
+  }
+  connectionText(n: FlowNode) {
+    const c = n.config ?? {};
+    if (n.type === 'invoke') return c['connection'] ? `${c['connection']} · ${c['method'] ?? ''} ${c['path'] ?? c['operation'] ?? ''}` : `(no connection) · ${c['operation'] ?? '?'}`;
+    if (n.type === 'trigger' && c['mode'] === 'rest') return c['connection'] ? `${c['connection']} · ${c['endpoint']?.method ?? ''} ${c['endpoint']?.path ?? ''}` : 'Not configured';
+    if (n.type === 'trigger' && c['mode'] === 'schedule') return `${c['frequency'] ?? 'manual'}${c['time'] ? ' ' + c['time'] : ''} · ${c['timezone'] ?? 'UTC'}`;
+    return '—';
+  }
+  schemaText(n: FlowNode) {
+    const c = n.config ?? {};
+    switch (n.type) {
+      case 'invoke': return c['table'] ? `${c['system']}.${c['table']}` : c['system'] ? `${c['system']} catalog` : '—';
+      case 'map': return `${c['input'] || '?'} → ${c['targetSystem'] ?? '?'}.${c['targetTable'] || '?'}`;
+      case 'trigger': return c['mode'] === 'rest' ? `in: ${c['endpoint']?.request?.table ?? 'none'} · out: ${c['endpoint']?.response?.table ?? 'none'}` : '—';
+      case 'stageFile': return `${c['format'] ?? ''} ${c['fileName'] ?? ''}`;
+      default: return '—';
+    }
+  }
+  mappingText(n: FlowNode) {
+    const c = n.config ?? {};
+    if (n.type === 'map') { const r = (c['rules'] ?? []).length; return r ? `${r} rule(s)` : 'Unconfigured'; }
+    if (n.type === 'invoke') return ['create', 'update', 'upsert'].includes(c['operation']) ? (c['input'] ? `request from ${c['input']}` : 'Needs request mapping') : 'No body';
+    return '—';
+  }
+
   // ----------------------------------------------------------- drag and drop
   key(lane: Lane, index: number) { return laneKey(lane) + '@' + index; }
   dragAction(e: DragEvent, a: ActionDef) { e.dataTransfer?.setData('application/x-eih-action', a.type); e.dataTransfer!.effectAllowed = 'copy'; }
@@ -496,12 +826,16 @@ export class DesignerComponent implements OnInit, OnDestroy {
   nodeName(id: string | null) { return id ? findNode(this.flow(), id)?.name ?? id : 'flow'; }
   icon(type: string) { return ICONS[type] ?? '•'; }
   shortPlanned(p?: string | null) { return p?.startsWith('Unsupported') ? 'unsupported' : 'planned'; }
-  byCategory(cat: string) { return (this.catalog()?.actions ?? []).filter(a => a.category === cat); }
+  /** Usable actions first, planned ones after them. */
+  byCategory(cat: string) { return (this.catalog()?.actions ?? []).filter(a => a.category === cat).sort((a, b) => Number(a.status === 'Planned') - Number(b.status === 'Planned')); }
   label(n: FlowNode) { return `${this.catalog()?.actions.find(a => a.type === n.type)?.label ?? n.type} ${n.name}`; }
   summary(n: FlowNode): string {
     const c = n.config ?? {};
     switch (n.type) {
-      case 'trigger': return 'Manual · ' + ((c['parameters'] ?? []).map((p: any) => p.name).join(', ') || 'no parameters');
+      case 'trigger':
+        if (c['mode'] === 'rest') return c['endpoint'] ? `REST · ${c['endpoint'].method} ${c['endpoint'].path}` : 'Application trigger · not configured';
+        if (c['mode'] === 'schedule') return `Schedule · ${c['frequency'] ?? 'manual'}${c['time'] ? ' ' + c['time'] : ''} · ${c['timezone'] ?? 'UTC'}`;
+        return 'Manual · ' + ((c['parameters'] ?? []).map((p: any) => p.name).join(', ') || 'no parameters');
       case 'invoke': return `${c['operation'] ?? '?'} ${c['system'] ?? '?'}.${c['table'] ?? '?'}`;
       case 'assign': return (c['assignments'] ?? []).map((a: any) => a.variable || '?').join(', ');
       case 'map': return `${c['input'] || '?'} → ${c['targetSystem'] ?? '?'}.${c['targetTable'] || '?'} · ${(c['rules'] ?? []).length} rules`;

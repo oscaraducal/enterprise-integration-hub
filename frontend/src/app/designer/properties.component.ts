@@ -22,35 +22,51 @@ import { FieldMapperComponent, FieldRule } from './field-mapper.component';
         <label>Description<textarea aria-label="Action description" rows="2" [ngModel]="node.description" (ngModelChange)="set('description', $event)" maxlength="500"></textarea></label>
         @switch (node.type) {
           @case ('trigger') {
-            <h3>Parameters</h3>
-            @for (p of node.config['parameters']; track $index; let i = $index) {
-              <div class="param-row">
-                <input [attr.aria-label]="'Parameter ' + (i + 1) + ' name'" [ngModel]="p.name" (ngModelChange)="p.name = $event; emit()" placeholder="name" class="mono">
-                <select [attr.aria-label]="'Parameter ' + (i + 1) + ' type'" [ngModel]="p.type" (ngModelChange)="p.type = $event; emit()">@for (t of paramTypes; track t) { <option>{{t}}</option> }</select>
-                <input [attr.aria-label]="'Parameter ' + (i + 1) + ' sample'" [ngModel]="p.sample" (ngModelChange)="p.sample = $event; emit()" placeholder="sample">
-                <button mat-button type="button" (click)="node.config['parameters'].splice(i, 1); emit()" [attr.aria-label]="'Remove parameter ' + (i + 1)">✕</button>
-              </div>
+            <div class="mode-tag">{{node.config['mode'] === 'rest' ? 'Application · REST trigger' : node.config['mode'] === 'schedule' ? 'Scheduled' : 'Manual practice'}}</div>
+            @if (node.config['mode'] === 'rest') {
+              @if (node.config['connection'] && node.config['endpoint']; as configured) {
+                <dl class="record-dl"><dt>Connection</dt><dd><code>{{node.config['connection']}}</code></dd>
+                  <dt>Endpoint</dt><dd><code>{{node.config['endpoint'].method}} {{node.config['endpoint'].path}}</code></dd>
+                  <dt>Request</dt><dd>{{node.config['endpoint'].request ? node.config['endpoint'].request.system + '.' + node.config['endpoint'].request.table + ' ($request)' : 'none'}}</dd>
+                  <dt>Response</dt><dd>{{node.config['endpoint'].response ? node.config['endpoint'].response.system + '.' + node.config['endpoint'].response.table : 'none'}}</dd></dl>
+              } @else { <p class="inline-warning flat">Not configured: choose a Trigger connection and define the endpoint.</p> }
+              @if (!readOnly()) { <button mat-stroked-button type="button" (click)="configureTrigger.emit()">{{node.config['connection'] ? 'Edit endpoint…' : 'Configure trigger…'}}</button>
+                @if (node.config['endpoint']?.response) { <button mat-button type="button" (click)="addMapping.emit({ kind: 'triggerResponse', nodeId: node.id })">+ Response mapping</button> } }
+              <p class="hint">Design-time only: the endpoint is not activated or reachable.</p>
+            } @else if (node.config['mode'] === 'schedule') {
+              <label>Frequency<select aria-label="Frequency" [ngModel]="node.config['frequency'] ?? 'manual'" (ngModelChange)="node.config['frequency'] = $event; emit()">
+                <option value="manual">Manual run</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+              @if ((node.config['frequency'] ?? 'manual') !== 'manual') { <label>Time (24-hour)<input type="time" aria-label="Run time" [ngModel]="node.config['time']" (ngModelChange)="node.config['time'] = $event; emit()"></label> }
+              @if (node.config['frequency'] === 'weekly') {
+                <fieldset class="days" aria-label="Weekdays">@for (d of weekDays; track d) { <label class="check"><input type="checkbox" [attr.aria-label]="d" [ngModel]="(node.config['daysOfWeek'] ?? []).includes(d)" (ngModelChange)="toggleDay(d, $event)"> {{d}}</label> }</fieldset>
+              }
+              @if (node.config['frequency'] === 'monthly') { <label>Day of month (1-28)<input type="number" aria-label="Day of month" min="1" max="28" [ngModel]="node.config['dayOfMonth']" (ngModelChange)="node.config['dayOfMonth'] = $event; emit()"></label> }
+              <label>Time zone<input aria-label="Time zone" class="mono" [ngModel]="node.config['timezone'] ?? 'UTC'" (ngModelChange)="node.config['timezone'] = $event; emit()" placeholder="Asia/Manila" list="tzs" maxlength="64">
+                <datalist id="tzs"><option value="UTC"></option><option [value]="localZone"></option><option value="Asia/Manila"></option><option value="America/New_York"></option><option value="Europe/London"></option></datalist></label>
+              <h3>Schedule parameters</h3>
+              <ng-container *ngTemplateOutlet="paramRows"></ng-container>
+              <p class="hint">Design-time only: no background job is created. Runs will be started manually once execution exists.</p>
+            } @else {
+              <h3>Parameters</h3>
+              <ng-container *ngTemplateOutlet="paramRows"></ng-container>
+              <p class="hint">Referenced as <code>$trigger.name</code>. Milestone D runs the flow manually with these sample values.</p>
             }
-            <button mat-button type="button" (click)="node.config['parameters'].push({ name: '', type: 'string', required: true, sample: '' }); emit()">+ Parameter</button>
-            <p class="hint">Referenced as <code>$trigger.name</code>. Milestone D runs the flow manually with these sample values.</p>
           }
           @case ('invoke') {
-            <label>Application<select aria-label="Application" [ngModel]="node.config['system']" (ngModelChange)="node.config['system'] = $event; node.config['table'] = tablesOf($event)[0]?.name ?? ''; fixOperation(); emit()">
-              <option value="crm">Legacy CRM</option><option value="erp">Modern ERP</option></select></label>
-            <label>Table<select aria-label="Table" [ngModel]="node.config['table']" (ngModelChange)="node.config['table'] = $event; fixOperation(); emit()">
-              @for (t of tablesOf(node.config['system']); track t.name) { <option [value]="t.name">{{t.name}}{{t.builtIn ? '' : ' (logical)'}}</option> }</select></label>
-            <label>Operation<select aria-label="Operation" [ngModel]="node.config['operation']" (ngModelChange)="node.config['operation'] = $event; emit()">
-              @for (o of operations(); track o) { <option>{{o}}</option> }</select></label>
-            @if (node.config['operation'] === 'get' || node.config['operation'] === 'update') {
+            @if (node.config['system']) {
+              <dl class="record-dl"><dt>Connection</dt><dd>{{node.config['connection'] ? connectionName(node.config['connection']) : '(none: created before connections)'}}</dd>
+                <dt>Operation</dt><dd><code>{{node.config['method'] ?? ''}} {{node.config['path'] ?? node.config['operation']}}</code></dd>
+                <dt>Business object</dt><dd>{{node.config['table'] ? node.config['system'] + '.' + node.config['table'] : node.config['system'] + ' catalog'}}</dd>
+                <dt>Request</dt><dd>{{['create', 'update', 'upsert'].includes(node.config['operation']) ? 'record from $' + (node.config['input'] || '?') : 'none'}}</dd>
+                <dt>Response</dt><dd>{{node.config['operation'] === 'list' || node.config['operation'] === 'catalogTables' ? 'collection' : 'record'}} as \${{node.name}}</dd></dl>
+            } @else { <p class="inline-warning flat">Not configured yet.</p> }
+            @if (node.config['operation'] === 'get' || node.config['operation'] === 'update' || node.config['operation'] === 'upsert' || node.config['operation'] === 'catalogTable') {
               <app-expression-input [api]="api()" label="Key" [variables]="variables()" [functions]="functions()" [value]="node.config['key'] ?? ''" (valueChange)="node.config['key'] = $event; emit()"></app-expression-input>
             }
             @if (node.config['operation'] === 'list') { <label>Limit<input type="number" aria-label="Limit" min="1" max="500" [ngModel]="node.config['limit'] ?? 100" (ngModelChange)="node.config['limit'] = $event; emit()"></label> }
-            @if (['create', 'update', 'upsert'].includes(node.config['operation'])) {
-              <label>Input variable<select aria-label="Input variable" [ngModel]="node.config['input']" (ngModelChange)="node.config['input'] = $event; emit()">
-                <option value="">— choose —</option>@for (v of tableVars(); track v.name) { <option [value]="v.name">\${{v.name}} ({{v.table?.name}})</option> }</select></label>
-              <p class="hint">Sends a record shaped like <code>{{node.config['table']}}</code>, usually a Map output. Nothing is sent while designing.</p>
-            }
-            <p class="hint">Output <code>\${{node.name}}</code>: {{node.config['operation'] === 'list' ? 'a collection of records' : 'one record'}}.</p>
+            @if (!readOnly()) { <div class="button-row"><button mat-stroked-button type="button" (click)="editEndpoint.emit(node.id)">Edit endpoint…</button>
+              @if (node.config['table'] && node.config['system']) { <button mat-button type="button" (click)="addMapping.emit({ kind: 'invokeResponse', nodeId: node.id })">+ Response mapping</button> }</div> }
+            <p class="hint">Nothing is sent while designing.</p>
           }
           @case ('assign') {
             @for (a of node.config['assignments']; track $index; let i = $index) {
@@ -63,11 +79,13 @@ import { FieldMapperComponent, FieldRule } from './field-mapper.component';
             <button mat-button type="button" (click)="node.config['assignments'].push({ variable: '', expression: '' }); emit()">+ Assignment</button>
           }
           @case ('map') {
+            <div class="mode-tag">{{purposeLabel(node.config['purpose'])}}</div>
+            @if (lockedTarget()) { <p class="hint">The target contract comes from {{node.config['purpose'] === 'invokeRequest' ? 'the Invoke after this mapping' : 'the Start trigger response'}}. Change it there.</p> }
             <label>Input variable<select aria-label="Input variable" [ngModel]="node.config['input']" (ngModelChange)="node.config['input'] = $event; emit()">
               <option value="">— choose —</option>@for (v of tableVars(); track v.name) { <option [value]="v.name">\${{v.name}} ({{v.kind}} of {{v.table?.name}})</option> }</select></label>
-            <label>Target application<select aria-label="Target application" [ngModel]="node.config['targetSystem']" (ngModelChange)="node.config['targetSystem'] = $event; node.config['targetTable'] = ''; emit()">
+            <label>Target application<select aria-label="Target application" [disabled]="lockedTarget()" [ngModel]="node.config['targetSystem']" (ngModelChange)="node.config['targetSystem'] = $event; node.config['targetTable'] = ''; emit()">
               <option value="crm">Legacy CRM</option><option value="erp">Modern ERP</option></select></label>
-            <label>Target table<select aria-label="Target table" [ngModel]="node.config['targetTable']" (ngModelChange)="node.config['targetTable'] = $event; emit()">
+            <label>Target table<select aria-label="Target table" [disabled]="lockedTarget()" [ngModel]="node.config['targetTable']" (ngModelChange)="node.config['targetTable'] = $event; emit()">
               <option value="">— choose —</option>@for (t of tablesOf(node.config['targetSystem']); track t.name) { <option [value]="t.name">{{t.name}}</option> }</select></label>
             <div class="map-summary"><b>{{(node.config['rules'] ?? []).length}}</b> field rule(s)
               <button mat-flat-button type="button" (click)="openMapper()" [disabled]="!mapperReady()">Open field mapper</button></div>
@@ -96,6 +114,7 @@ import { FieldMapperComponent, FieldRule } from './field-mapper.component';
                 <label>Record element<input aria-label="Record element" [ngModel]="node.config['recordElement']" (ngModelChange)="node.config['recordElement'] = $event; emit()" class="mono"></label>
               }
             }
+            @if (node.config['operation'] === 'writeFile' && !readOnly()) { <button mat-button type="button" (click)="addMapping.emit({ kind: 'stageFile', nodeId: node.id })">+ Structure mapping</button> }
             <p class="hint">Files live in a sandboxed stage area per execution; paths are not accepted.</p>
           }
           @case ('switch') {
@@ -137,6 +156,17 @@ import { FieldMapperComponent, FieldRule } from './field-mapper.component';
           @case ('rethrowFault') { <p class="hint">Passes the current fault to the enclosing handler. Only valid inside a fault handler.</p> }
           @case ('stop') { <p class="hint">Ends the flow immediately.</p> }
         }
+        <ng-template #paramRows>
+          @for (p of node.config['parameters'] ?? []; track $index; let i = $index) {
+            <div class="param-row">
+              <input [attr.aria-label]="'Parameter ' + (i + 1) + ' name'" [ngModel]="p.name" (ngModelChange)="p.name = $event; emit()" placeholder="name" class="mono">
+              <select [attr.aria-label]="'Parameter ' + (i + 1) + ' type'" [ngModel]="p.type" (ngModelChange)="p.type = $event; emit()">@for (t of paramTypes; track t) { <option>{{t}}</option> }</select>
+              <input [attr.aria-label]="'Parameter ' + (i + 1) + ' sample'" [ngModel]="p.sample" (ngModelChange)="p.sample = $event; emit()" placeholder="sample / default">
+              <button mat-button type="button" (click)="node.config['parameters'].splice(i, 1); emit()" [attr.aria-label]="'Remove parameter ' + (i + 1)">✕</button>
+            </div>
+          }
+          <button mat-button type="button" (click)="addParam()">+ Parameter</button>
+        </ng-template>
         <ng-template #faultFields>
           <label>Fault code<input aria-label="Fault code" [ngModel]="node.config['code']" (ngModelChange)="node.config['code'] = $event; emit()" maxlength="40" class="mono"></label>
           <app-expression-input [api]="api()" label="Message" [variables]="variables()" [functions]="functions()" [value]="node.config['message'] ?? ''" (valueChange)="node.config['message'] = $event; emit()"></app-expression-input>
@@ -164,7 +194,21 @@ export class NodePropertiesComponent implements OnChanges {
   catalogs = input<Record<SystemId, TableView[]>>({ crm: [], erp: [] });
   issues = input<FlowIssue[]>([]);
   readOnly = input(false);
+  connections = input<{ identifier: string; name: string }[]>([]);
   changed = output<FlowNode>();
+  editEndpoint = output<string>();
+  configureTrigger = output<void>();
+  addMapping = output<{ kind: 'invokeResponse' | 'triggerResponse' | 'stageFile'; nodeId: string }>();
+  readonly weekDays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+  readonly localZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } })();
+  lockedTarget = computed(() => ['invokeRequest', 'triggerResponse'].includes(this.n()?.config['purpose']));
+  purposeLabel(p?: string) { return ({ invokeRequest: 'Request mapping', invokeResponse: 'Response mapping', triggerResponse: 'Trigger response mapping', stageFile: 'File structure mapping' } as Record<string, string>)[p ?? ''] ?? 'Map'; }
+  connectionName(id: string) { const c = this.connections().find(x => x.identifier === id); return c ? `${c.name} (${id})` : id; }
+  toggleDay(d: string, on: boolean) {
+    const c = this.n()!.config; const days: string[] = c['daysOfWeek'] ?? [];
+    c['daysOfWeek'] = on ? [...new Set([...days, d])] : days.filter(x => x !== d); this.emit();
+  }
+  addParam() { const c = this.n()!.config; (c['parameters'] ??= []).push({ name: '', type: 'string', required: true, sample: '' }); this.emit(); }
   n = signal<FlowNode | null>(null); mapperOpen = signal(false); notice = signal('');
   readonly paramTypes = ['string', 'integer', 'decimal', 'boolean', 'date'];
   clone = clone; fieldsOf = fieldsOf;
