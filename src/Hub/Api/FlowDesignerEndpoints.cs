@@ -20,7 +20,15 @@ public static partial class FlowDesignerEndpoints
     public const string Format = "eih-flow";
     [GeneratedRegex("^[a-z][a-z0-9-]{2,59}$")] private static partial Regex FlowName();
 
-    public record CreateFlow(string Name, string Title, string? Description, string? Template);
+    /// <summary>Style (application, schedule, manual), identity (identifier, version label, tags) and an optional starter template.
+    /// A blank integration contains only its Start trigger. The legacy form { name, title, template } is still accepted.</summary>
+    public record CreateFlow(string? Name, string Title, string? Description, string? Template, string? Style = null, string? Identifier = null,
+        string? VersionLabel = null, string[]? Tags = null);
+    [GeneratedRegex("^[A-Z][A-Z0-9_]{1,49}$")] private static partial Regex IdentifierPattern();
+    [GeneratedRegex(@"^\d{2}\.\d{2}\.\d{4}$")] private static partial Regex VersionPattern();
+    [GeneratedRegex("^[a-z0-9][a-z0-9-]{0,29}$")] private static partial Regex TagPattern();
+    public static readonly string[] Styles = ["application", "schedule", "manual"];
+    public static string Slug(string identifier) => identifier.ToLowerInvariant().Replace('_', '-');
     public record SaveDraft(string? Title, string? Description, FlowDefinition? Definition, int Revision);
     public record Publish(int Revision);
     public record ValidateRequest(FlowDefinition? Definition);
@@ -33,7 +41,8 @@ public static partial class FlowDesignerEndpoints
         flows.MapGet("/actions", () => new
         {
             actions = ActionCatalog.All, functions = Expressions.Functions, dateFormats = Expressions.DateFormats,
-            templates = FlowTemplates.All.Select(t => new { t.Id, t.Title, t.Description, t.Scenario }),
+            templates = FlowTemplates.All.Select(t => new { t.Id, t.Title, t.Description, t.Scenario }), styles = Styles,
+            frequencies = FlowValidator.Frequencies, weekDays = FlowValidator.WeekDays,
             limits = new { FlowValidator.MaxNodes, FlowValidator.MaxDepth, FlowValidator.MaxDefinitionBytes, Expressions.MaxLength },
             execution = "Designs are validated and versioned. Execution of supported actions arrives in Milestone D."
         });
@@ -42,10 +51,10 @@ public static partial class FlowDesignerEndpoints
             var parsed = Expressions.Parse(request.Expression);
             return Results.Ok(new { valid = parsed.Errors.Count == 0, errors = parsed.Errors, variables = parsed.Variables.Select(v => v.ToString()).Distinct() });
         }).RequireRateLimiting("mutations");
-        flows.MapPost("/validate", async (ValidateRequest request, IHttpClientFactory f, CancellationToken ct) =>
+        flows.MapPost("/validate", async (ValidateRequest request, HubDb db, IHttpClientFactory f, CancellationToken ct) =>
         {
             if (TooLarge(request.Definition)) return Results.BadRequest(new { error = $"Flow definitions are limited to {FlowValidator.MaxDefinitionBytes / 1024} KB." });
-            return Results.Ok(FlowValidator.Validate(request.Definition, await Catalogs(f, ct)));
+            return Results.Ok(await Check(request.Definition, db, f, ct));
         }).RequireRateLimiting("mutations");
 
         flows.MapGet("", async (HubDb db) =>
@@ -54,6 +63,7 @@ public static partial class FlowDesignerEndpoints
             var latest = await db.FlowVersions.AsNoTracking().GroupBy(v => v.FlowName)
                 .Select(g => new { Name = g.Key, Version = g.Max(v => v.Version) }).ToDictionaryAsync(x => x.Name, x => x.Version);
             return designs.Select(d => new { d.Name, d.Title, d.Description, d.DraftRevision, d.DraftUpdatedAt, d.DraftUpdatedBy,
+                style = d.Style ?? "manual", identifier = d.Identifier ?? d.Name.ToUpperInvariant().Replace('-', '_'), versionLabel = d.VersionLabel ?? "01.00.0000", tags = Tags(d.Tags),
                 latestVersion = latest.GetValueOrDefault(d.Name), status = latest.ContainsKey(d.Name) ? "Published · draft editable" : "Draft only" });
         });
         flows.MapGet("/{name}", async (string name, HubDb db, IHttpClientFactory f, CancellationToken ct) =>
@@ -64,7 +74,8 @@ public static partial class FlowDesignerEndpoints
             var versions = await db.FlowVersions.AsNoTracking().Where(v => v.FlowName == name).OrderByDescending(v => v.Version)
                 .Select(v => new { v.Version, v.Title, v.PublishedAt, v.PublishedBy, v.NodeCount }).ToListAsync(ct);
             return Results.Ok(new { d.Name, d.Title, d.Description, revision = d.DraftRevision, d.DraftUpdatedAt, d.DraftUpdatedBy,
-                definition, versions, report = FlowValidator.Validate(definition, await Catalogs(f, ct)) });
+                style = d.Style ?? "manual", identifier = d.Identifier ?? d.Name.ToUpperInvariant().Replace('-', '_'), versionLabel = d.VersionLabel ?? "01.00.0000", tags = Tags(d.Tags),
+                definition, versions, report = await Check(definition, db, f, ct) });
         });
         flows.MapGet("/{name}/versions/{version:int}", async (string name, int version, HubDb db) =>
         {
@@ -74,11 +85,23 @@ public static partial class FlowDesignerEndpoints
         });
         flows.MapPost("", async (CreateFlow input, ClaimsPrincipal user, HubDb db, CancellationToken ct) =>
         {
-            if (!FlowName().IsMatch(input.Name ?? "")) return Invalid("name", "Use 3-60 lowercase letters, digits or '-', starting with a letter (e.g. customer-sync).");
-            if (string.IsNullOrWhiteSpace(input.Title) || input.Title.Length > 80) return Invalid("title", "Title is required (max 80 characters).");
+            var style = input.Style ?? "manual";
+            if (!Styles.Contains(style)) return Invalid("style", "Choose Application, Scheduled or Manual practice.");
+            if (input.Identifier is { } id && !IdentifierPattern().IsMatch(id)) return Invalid("identifier", "Use 2-50 upper-case letters, digits or '_', starting with a letter (e.g. CUSTOMER_SYNC).");
+            var name = input.Name ?? (input.Identifier is { } ident ? Slug(ident) : null);
+            if (!FlowName().IsMatch(name ?? "")) return Invalid("name", "Use 3-60 lowercase letters, digits or '-', starting with a letter (e.g. customer-sync).");
+            if (string.IsNullOrWhiteSpace(input.Title) || input.Title.Length > 80) return Invalid("title", "Name is required (max 80 characters).");
             if (input.Description?.Length > 300) return Invalid("description", "Max 300 characters.");
-            if (!FlowTemplates.ById.TryGetValue(input.Template ?? "blank", out var template)) return Invalid("template", "Unknown template.");
-            return await Create(db, input.Name!, input.Title.Trim(), input.Description?.Trim(), template.Definition, User(user), ct);
+            var version = input.VersionLabel ?? "01.00.0000";
+            if (!VersionPattern().IsMatch(version)) return Invalid("versionLabel", "Use the format xx.xx.xxxx with digits only (e.g. 01.00.0000).");
+            var tags = (input.Tags ?? []).Select(t => t.Trim().ToLowerInvariant()).Where(t => t.Length > 0).Distinct().ToArray();
+            if (tags.Length > 8 || tags.Any(t => !TagPattern().IsMatch(t))) return Invalid("tags", "Up to 8 tags of lowercase letters, digits or '-' (max 30).");
+            FlowDefinition definition;
+            if (input.Template is null or "blank") definition = FlowTemplates.Blank(style);
+            else if (!FlowTemplates.ById.TryGetValue(input.Template, out var template)) return Invalid("template", "Unknown template.");
+            else if (style != "manual") return Invalid("template", "Starter templates use a manual trigger: choose Manual practice, or start blank.");
+            else definition = template.Definition;
+            return await Create(db, name!, input.Title.Trim(), input.Description?.Trim(), definition, User(user), ct, meta: new(style, input.Identifier ?? name!.ToUpperInvariant().Replace('-', '_'), version, tags));
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
         flows.MapPut("/{name}/draft", async (string name, SaveDraft input, ClaimsPrincipal user, HubDb db, IHttpClientFactory f, CancellationToken ct) =>
         {
@@ -96,7 +119,7 @@ public static partial class FlowDesignerEndpoints
             try { await db.SaveChangesAsync(ct); }
             catch (DbUpdateConcurrencyException) { db.ChangeTracker.Clear(); return DraftChanged((await db.FlowDesigns.AsNoTracking().SingleAsync(x => x.Name == name, ct))); }
             // Drafts may be saved while incomplete; the report says what blocks publishing.
-            return Results.Ok(new { revision = d.DraftRevision, d.DraftUpdatedAt, report = FlowValidator.Validate(input.Definition, await Catalogs(f, ct)) });
+            return Results.Ok(new { revision = d.DraftRevision, d.DraftUpdatedAt, report = await Check(input.Definition, db, f, ct) });
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
         flows.MapPost("/{name}/publish", async (string name, Publish input, ClaimsPrincipal user, HubDb db, IHttpClientFactory f, CancellationToken ct) =>
         {
@@ -104,7 +127,7 @@ public static partial class FlowDesignerEndpoints
             if (d is null) return Results.NotFound();
             if (d.DraftRevision != input.Revision) return DraftChanged(d);
             var definition = JsonSerializer.Deserialize<FlowDefinition>(d.DraftJson, Json);
-            var report = FlowValidator.Validate(definition, await Catalogs(f, ct));
+            var report = await Check(definition, db, f, ct);
             if (!report.Valid) return Results.BadRequest(new { error = "Only a valid flow can be published. Fix the errors and try again.", report });
             if (report.Issues.Any(i => i.Message.Contains("could not be reached")))
                 return Results.Problem(statusCode: 503, title: "A catalog was unavailable, so the flow could not be fully verified. Try again when the CRM and ERP are up.");
@@ -131,6 +154,7 @@ public static partial class FlowDesignerEndpoints
             }
             else json = d.DraftJson;
             var document = new { format = Format, formatVersion = 1, name = d.Name, title = d.Title, description = d.Description,
+                style = d.Style ?? "manual", identifier = d.Identifier, versionLabel = d.VersionLabel, tags = Tags(d.Tags),
                 source = exported is null ? "draft" : $"version {exported}", exportedAt = DateTime.UtcNow,
                 definition = JsonSerializer.Deserialize<FlowDefinition>(json, Json) };
             return Results.File(JsonSerializer.SerializeToUtf8Bytes(document, new JsonSerializerOptions(Json) { WriteIndented = true }),
@@ -153,18 +177,29 @@ public static partial class FlowDesignerEndpoints
             var title = doc.TryGetProperty("title", out var tt) && tt.GetString() is { Length: > 0 and <= 80 } s ? s : name!;
             var description = doc.TryGetProperty("description", out var dd) && dd.ValueKind == JsonValueKind.String && dd.GetString()!.Length <= 300 ? dd.GetString() : null;
             // Imports always become a new draft; they never overwrite an existing flow or a published version.
-            return await Create(db, name!, title, description, definition, User(user), ct, imported: true);
+            string? Meta(string key) => doc.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            var importStyle = Styles.Contains(Meta("style")) ? Meta("style")! : "manual";
+            var importId = IdentifierPattern().IsMatch(Meta("identifier") ?? "") && Slug(Meta("identifier")!) == name ? Meta("identifier")! : name!.ToUpperInvariant().Replace('-', '_');
+            var importVersion = VersionPattern().IsMatch(Meta("versionLabel") ?? "") ? Meta("versionLabel")! : "01.00.0000";
+            var importTags = doc.TryGetProperty("tags", out var tg) && tg.ValueKind == JsonValueKind.Array
+                ? tg.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => TagPattern().IsMatch(x)).Take(8).ToArray() : [];
+            return await Create(db, name!, title, description, definition, User(user), ct, imported: true, meta: new(importStyle, importId, importVersion, importTags));
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
     }
 
-    private static async Task<IResult> Create(HubDb db, string name, string title, string? description, FlowDefinition definition, string user, CancellationToken ct, bool imported = false)
+    public sealed record FlowMeta(string Style, string Identifier, string VersionLabel, string[] Tags);
+    private static string[] Tags(string? csv) => string.IsNullOrEmpty(csv) ? [] : csv.Split(',', StringSplitOptions.RemoveEmptyEntries);
+    private static async Task<IResult> Create(HubDb db, string name, string title, string? description, FlowDefinition definition, string user, CancellationToken ct,
+        bool imported = false, FlowMeta? meta = null)
     {
-        if (await db.FlowDesigns.AnyAsync(x => x.Name == name, ct)) return Results.Conflict(new { code = "FlowExists", error = $"A flow named '{name}' already exists." });
+        if (await db.FlowDesigns.AnyAsync(x => x.Name == name, ct)) return Results.Conflict(new { code = "FlowExists", error = $"An integration named '{name}' already exists." });
         var now = DateTime.UtcNow;
         db.FlowDesigns.Add(new FlowDesign { Name = name, Title = title, Description = description, DraftJson = JsonSerializer.Serialize(definition, Json),
-            DraftRevision = 1, DraftUpdatedAt = now, DraftUpdatedBy = user, CreatedAt = now, CreatedBy = user });
+            DraftRevision = 1, DraftUpdatedAt = now, DraftUpdatedBy = user, CreatedAt = now, CreatedBy = user,
+            Style = meta?.Style ?? "manual", Identifier = meta?.Identifier, VersionLabel = meta?.VersionLabel ?? "01.00.0000",
+            Tags = meta is { Tags.Length: > 0 } ? string.Join(',', meta.Tags) : null });
         try { await db.SaveChangesAsync(ct); }
-        catch (DbUpdateException) { return Results.Conflict(new { code = "FlowExists", error = $"A flow named '{name}' already exists." }); }
+        catch (DbUpdateException) { return Results.Conflict(new { code = "FlowExists", error = $"An integration named '{name}' already exists." }); }
         return Results.Created($"/api/flows/{name}", new { name, revision = 1, imported });
     }
     private static IResult Invalid(string field, string message) => Results.ValidationProblem(new Dictionary<string, string[]> { [field] = [message] });
@@ -173,23 +208,10 @@ public static partial class FlowDesignerEndpoints
     private static string User(ClaimsPrincipal user) => user.Identity?.Name ?? "unknown";
     private static bool TooLarge(FlowDefinition? d) => d is not null && JsonSerializer.SerializeToUtf8Bytes(d, Json).Length > FlowValidator.MaxDefinitionBytes;
 
-    /// <summary>Snapshot of both catalogs for one validation. An unreachable system yields "unverified" warnings, not false errors.</summary>
-    private static async Task<TableResolver> Catalogs(IHttpClientFactory f, CancellationToken ct)
+    /// <summary>Validates against a snapshot of both catalogs and the saved connections. An unreachable system yields "unverified" warnings, not false errors.</summary>
+    private static async Task<FlowReport> Check(FlowDefinition? definition, HubDb db, IHttpClientFactory f, CancellationToken ct)
     {
-        async Task<List<TableView>?> Load(string client)
-        {
-            try
-            {
-                using var response = await f.CreateClient(client).GetAsync("api/catalog/tables", ct);
-                return response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<List<TableView>>(Json, ct) : null;
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested) { return null; }
-        }
-        var crm = await Load("CRM"); var erp = await Load("ERP");
-        return (system, table) =>
-        {
-            var tables = system == "crm" ? crm : system == "erp" ? erp : null;
-            return tables is null ? new TableLookup(null, Unavailable: system is "crm" or "erp") : new TableLookup(tables.FirstOrDefault(t => t.Name == table));
-        };
+        var snapshot = await CatalogSnapshot.LoadAsync(f, ct);
+        return FlowValidator.Validate(definition, snapshot.Resolve, await ConnectionEndpoints.Resolver(db, ct));
     }
 }

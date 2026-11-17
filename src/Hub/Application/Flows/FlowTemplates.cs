@@ -11,11 +11,11 @@ public static class FlowTemplates
 
     public static readonly FlowTemplate[] All =
     [
-        new("blank", "Blank flow", "A Trigger and a Return. Build from the palette.", "Practice",
+        new("blank", "Blank integration", "Only the Start trigger. Add every action yourself with + or drag-and-drop.", "Practice",
             Parse("""
             { "schemaVersion": 1,
               "trigger": { "id": "t1", "type": "trigger", "name": "start", "config": { "mode": "manual", "parameters": [] } },
-              "steps": [ { "id": "n1", "type": "return", "name": "done", "config": {} } ], "globalFaultHandler": [] }
+              "steps": [], "globalFaultHandler": [] }
             """)),
         new("customer-sync", "Legacy CRM customer → Modern ERP customer", "Read a CRM customer, guard the email, map it and upsert the ERP customer master.", "SCN-001 / SCN-003",
             Parse("""
@@ -87,4 +87,16 @@ public static class FlowTemplates
             """)),
     ];
     public static readonly Dictionary<string, FlowTemplate> ById = All.ToDictionary(t => t.Id);
+
+    /// <summary>A genuinely empty integration: only the Start trigger for its style, no business actions.</summary>
+    public static FlowDefinition Blank(string style) => new()
+    {
+        Trigger = new FlowNode { Id = "t1", Type = "trigger", Name = "start", Config = style switch
+        {
+            // Application: an unconfigured placeholder until a Trigger connection and REST endpoint are chosen.
+            "application" => new() { ["mode"] = "rest" },
+            "schedule" => new() { ["mode"] = "schedule", ["frequency"] = "manual", ["timezone"] = "UTC", ["parameters"] = new System.Text.Json.Nodes.JsonArray() },
+            _ => new() { ["mode"] = "manual", ["parameters"] = new System.Text.Json.Nodes.JsonArray() },
+        } },
+    };
 }

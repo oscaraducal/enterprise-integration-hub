@@ -244,6 +244,7 @@ public partial class Program
         api.MapPortfolioLab();
         api.MapDataCatalog();
         api.MapFlowDesigner();
+        api.MapConnections();
         await app.RunAsync();
     }
     private static async Task<string?> ActiveSync(HubDb db, string sourceId) =>

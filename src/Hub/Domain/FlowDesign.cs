@@ -12,6 +12,14 @@ public class FlowDesign
     public string DraftUpdatedBy { get; set; } = "";
     public DateTime CreatedAt { get; set; }
     public string CreatedBy { get; set; } = "";
+    /// <summary>application, schedule or manual (null for flows created before Milestone C.1, read as manual).</summary>
+    public string? Style { get; set; }
+    /// <summary>UPPER_SNAKE identifier, e.g. CUSTOMER_SYNC.</summary>
+    public string? Identifier { get; set; }
+    /// <summary>Design version label in xx.xx.xxxx form, e.g. 01.00.0000.</summary>
+    public string? VersionLabel { get; set; }
+    /// <summary>Comma-separated tags.</summary>
+    public string? Tags { get; set; }
 }
 /// <summary>An immutable published version. Publishing requires a valid graph; versions are never edited.</summary>
 public class FlowVersion

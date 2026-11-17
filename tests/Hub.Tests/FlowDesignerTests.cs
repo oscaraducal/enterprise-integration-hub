@@ -55,10 +55,11 @@ public class FlowValidatorTests
     private static FlowNode Node(string id, string type, string name, string config = "{}") =>
         new() { Id = id, Type = type, Name = name, Config = JsonNode.Parse(config)!.AsObject() };
     private static FlowReport Check(FlowDefinition f) => FlowValidator.Validate(f, Resolve);
+    /// <summary>The blank start plus a Return, as a minimal valid flow for structure tests.</summary>
+    private static FlowDefinition Base() { var f = Template("blank"); f.Steps.Add(Node("n1", "return", "done")); return f; }
     private static void HasError(FlowReport r, string text) => Assert.Contains(r.Issues, i => i.Severity == "error" && i.Message.Contains(text));
 
     [Theory]
-    [InlineData("blank")]
     [InlineData("customer-sync")]
     [InlineData("order-xml")]
     [InlineData("order-review")]
@@ -82,22 +83,22 @@ public class FlowValidatorTests
     public void Structure_rules()
     {
         HasError(Check(new FlowDefinition()), "Add a Trigger");
-        var f = Template("blank");
+        var f = Base();
         f.Steps.Insert(0, Node("n1", "logger", "done", """{"level":"info","message":"'x'"}"""));
         HasError(Check(f), "already named 'done'");
-        f = Template("blank");
+        f = Base();
         f.Steps.Add(Node("n9", "logger", "after", """{"level":"info","message":"'x'"}"""));
         HasError(Check(f), "Unreachable");
-        f = Template("blank");
+        f = Base();
         f.Steps.Insert(0, Node("n1", "notification", "notify"));
         HasError(Check(f), "planned");
-        f = Template("blank");
+        f = Base();
         f.Steps.Insert(0, Node("n2", "rethrowFault", "again"));
         HasError(Check(f), "only valid inside a fault handler");
-        f = Template("blank");
+        f = Base();
         f.Steps.Insert(0, Node("n2", "wait", "pause", """{"seconds":0}"""));
         HasError(Check(f), "1 to 60 seconds");
-        f = Template("blank");
+        f = Base();
         var sw = Node("n2", "switch", "decide");
         sw.Branches.Add(new FlowBranch { Id = "b1", Kind = "case", Label = "A", Condition = "1 == 1" });
         f.Steps.Insert(0, sw);
@@ -107,7 +108,7 @@ public class FlowValidatorTests
     [Fact]
     public void Nesting_depth_is_bounded()
     {
-        var f = Template("blank");
+        var f = Base();
         var list = f.Steps;
         for (var i = 0; i < FlowValidator.MaxDepth + 2; i++)
         {
