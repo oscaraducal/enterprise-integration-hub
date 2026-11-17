@@ -116,7 +116,7 @@ public static class CatalogGatewayEndpoints
                 var next = (await db.MappingDefinitions.Where(d => d.Name == name).MaxAsync(d => (int?)d.Version, ct) ?? 0) + 1;
                 var saved = new MappingDefinition
                 {
-                    Name = name, Version = next, Description = draft.Description?.Trim() is { Length: > 0 and <= 300 } d ? d : null,
+                    Name = name, Version = next, Description = draft.Description?.Trim() is { Length: > 0 } d ? d : null, // length validated above
                     SourceSystem = draft.Source.System, SourceTable = draft.Source.Table, SourceSchemaVersion = source!.Version,
                     TargetSystem = draft.Target.System, TargetTable = draft.Target.Table, TargetSchemaVersion = target!.Version,
                     FieldsJson = JsonSerializer.Serialize(draft.Fields, Json), CreatedBy = user.Identity?.Name ?? "unknown", CreatedAt = DateTime.UtcNow

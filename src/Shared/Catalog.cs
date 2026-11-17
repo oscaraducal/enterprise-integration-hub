@@ -305,6 +305,9 @@ public static class CatalogEndpoints
         group.MapPost("/tables/{name}/schema", async (string name, SchemaChange change, TDb db, CancellationToken ct) =>
         {
             if (BuiltIn(name) is not null) return BuiltInRefusal(name);
+            // Write transaction (SQLite BEGIN IMMEDIATE): the record checks below and the save cannot interleave with another
+            // schema change or record write, so data is never validated against a schema that is being changed.
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
             var t = await db.CatalogTables.SingleOrDefaultAsync(x => x.Name == name, ct);
             if (t is null) return Results.NotFound();
             var columns = Columns(t.ColumnsJson);
@@ -364,11 +367,13 @@ public static class CatalogEndpoints
             t.UpdatedAt = DateTime.UtcNow;
             db.CatalogTableVersions.Add(new() { TableName = name, Version = t.Version, ColumnsJson = t.ColumnsJson, Change = summary, ChangedAt = t.UpdatedAt });
             await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
             return Results.Ok(View(t, records.Count));
         });
         group.MapDelete("/tables/{name}", async (string name, TDb db, CancellationToken ct) =>
         {
             if (BuiltIn(name) is not null) return BuiltInRefusal(name);
+            await using var tx = await db.Database.BeginTransactionAsync(ct); // no record can be added between the check and the delete
             var t = await db.CatalogTables.SingleOrDefaultAsync(x => x.Name == name, ct);
             if (t is null) return Results.NotFound();
             var count = await db.CatalogRecords.CountAsync(r => r.TableName == name, ct);
@@ -376,6 +381,7 @@ public static class CatalogEndpoints
             db.CatalogTables.Remove(t);
             db.CatalogTableVersions.RemoveRange(db.CatalogTableVersions.Where(v => v.TableName == name));
             await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
             return Results.NoContent();
         });
 
@@ -385,17 +391,24 @@ public static class CatalogEndpoints
             if (BuiltIn(name) is not null) return BuiltInRefusal(name);
             if (!await db.CatalogTables.AnyAsync(t => t.Name == name, ct)) return Results.NotFound();
             var size = Math.Clamp(pageSize ?? CatalogRules.DefaultPageSize, 1, CatalogRules.MaxPageSize);
-            var query = db.CatalogRecords.AsNoTracking().Where(r => r.TableName == name);
+            var query = db.CatalogRecords.AsNoTracking().Where(r => r.TableName == name).OrderBy(r => r.RecordKey);
+            List<CatalogRecord> rows; int total, current;
             if (!string.IsNullOrWhiteSpace(search))
             {
                 var term = search.Trim();
                 if (term.Length > 60) return Results.BadRequest(new { error = "Search is limited to 60 characters." });
-                var pattern = "%" + term.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
-                query = query.Where(r => EF.Functions.Like(r.DataJson, pattern, "\\"));
+                // Match field values only, never JSON property names. A table holds at most MaxRecords rows, so this is bounded.
+                var matches = (await query.ToListAsync(ct)).Where(r => MatchesValue(r.DataJson, term)).ToList();
+                total = matches.Count;
+                current = Math.Clamp(page ?? 1, 1, Math.Max(1, (int)Math.Ceiling(total / (double)size)));
+                rows = matches.Skip((current - 1) * size).Take(size).ToList();
             }
-            var total = await query.CountAsync(ct);
-            var current = Math.Clamp(page ?? 1, 1, Math.Max(1, (int)Math.Ceiling(total / (double)size)));
-            var rows = await query.OrderBy(r => r.RecordKey).Skip((current - 1) * size).Take(size).ToListAsync(ct);
+            else
+            {
+                total = await query.CountAsync(ct);
+                current = Math.Clamp(page ?? 1, 1, Math.Max(1, (int)Math.Ceiling(total / (double)size)));
+                rows = await query.Skip((current - 1) * size).Take(size).ToListAsync(ct);
+            }
             return Results.Ok(new RecordPage(rows.Select(ToView).ToList(), total, current, size));
         });
         group.MapGet("/tables/{name}/records/{key}", async (string name, string key, TDb db, CancellationToken ct) =>
@@ -407,9 +420,10 @@ public static class CatalogEndpoints
         group.MapPost("/tables/{name}/records", async (string name, JsonElement body, TDb db, CancellationToken ct) =>
         {
             if (BuiltIn(name) is not null) return BuiltInRefusal(name);
+            await using var tx = await db.Database.BeginTransactionAsync(ct); // validated against the schema that is committed
             var t = await db.CatalogTables.AsNoTracking().SingleOrDefaultAsync(x => x.Name == name, ct);
             if (t is null) return Results.NotFound();
-            var (data, key, errors) = CatalogRules.ValidateRecord(Columns(t.ColumnsJson), t.PrimaryKey, body);
+            var (data, key, errors) =CatalogRules.ValidateRecord(Columns(t.ColumnsJson), t.PrimaryKey, body);
             if (errors.Count > 0) return Results.ValidationProblem(errors);
             if (await db.CatalogRecords.CountAsync(r => r.TableName == name, ct) >= CatalogRules.MaxRecords)
                 return Results.Conflict(new { code = "RecordLimit", error = $"Logical tables are limited to {CatalogRules.MaxRecords} synthetic records." });
@@ -418,13 +432,14 @@ public static class CatalogEndpoints
             var now = DateTime.UtcNow;
             var row = new CatalogRecord { TableName = name, RecordKey = key!, DataJson = data!.ToJsonString(), SchemaVersion = t.Version, CreatedAt = now, UpdatedAt = now };
             db.CatalogRecords.Add(row);
-            try { await db.SaveChangesAsync(ct); }
+            try { await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); }
             catch (DbUpdateException) { return Results.Conflict(new { code = "DuplicateKey", error = $"A record with {t.PrimaryKey} '{key}' already exists." }); }
             return Results.Created($"/api/catalog/tables/{name}/records/{key}", ToView(row));
         });
         group.MapPut("/tables/{name}/records/{key}", async (string name, string key, JsonElement body, TDb db, CancellationToken ct) =>
         {
             if (BuiltIn(name) is not null) return BuiltInRefusal(name);
+            await using var tx = await db.Database.BeginTransactionAsync(ct); // validated against the schema that is committed
             var t = await db.CatalogTables.AsNoTracking().SingleOrDefaultAsync(x => x.Name == name, ct);
             if (t is null) return Results.NotFound();
             var row = await db.CatalogRecords.SingleOrDefaultAsync(r => r.TableName == name && r.RecordKey == key, ct);
@@ -434,6 +449,7 @@ public static class CatalogEndpoints
             if (newKey != key) return Results.BadRequest(new { error = $"{t.PrimaryKey} cannot be changed (route '{key}', body '{newKey}')." });
             row.DataJson = data!.ToJsonString(); row.SchemaVersion = t.Version; row.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
             return Results.Ok(ToView(row));
         });
         group.MapDelete("/tables/{name}/records/{key}", async (string name, string key, TDb db, CancellationToken ct) =>
@@ -446,6 +462,10 @@ public static class CatalogEndpoints
             return Results.NoContent();
         });
     }
+    private static bool MatchesValue(string json, string term) =>
+        JsonNode.Parse(json) is JsonObject o && o.Any(p => p.Value is not null &&
+            (p.Value.GetValueKind() == JsonValueKind.String ? p.Value.GetValue<string>() : p.Value.ToJsonString())
+                .Contains(term, StringComparison.OrdinalIgnoreCase));
     private static RecordView ToView(CatalogRecord r) =>
         new(r.RecordKey, JsonDocument.Parse(r.DataJson).RootElement.Clone(), r.SchemaVersion, r.CreatedAt, r.UpdatedAt);
 }

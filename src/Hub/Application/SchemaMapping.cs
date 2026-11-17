@@ -170,6 +170,7 @@ public static partial class SchemaMapping
         var errors = new List<Issue>(); var warnings = new List<Issue>();
         if (string.IsNullOrWhiteSpace(draft.Name) || draft.Name.Length > 60 || !CatalogRules.ValidKey(draft.Name.Replace(' ', '-')))
             errors.Add(new("name", "Name the mapping (letters, digits, spaces, '.', '_' or '-'; max 60)."));
+        if (draft.Description?.Length > 300) errors.Add(new("description", "Description is limited to 300 characters."));
         var fields = draft.Fields ?? [];
         if (fields.Count == 0) errors.Add(new("fields", "Map at least one target field."));
         if (fields.Count > 60) errors.Add(new("fields", "A mapping is limited to 60 rules."));
