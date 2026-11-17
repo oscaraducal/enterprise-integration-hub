@@ -129,6 +129,15 @@ public sealed class FakeClients : HttpMessageHandler, IHttpClientFactory
     public int CrmCalls { get; private set; }
     public int ErpOrdersCreated => accepted.Count;
     private readonly Dictionary<string, string> accepted = [];
+    /// <summary>Legacy CRM customer returned for customer syncs (SCN-001/003).</summary>
+    public Customer Customer { get; set; } = new("C-300", "Bluefin  Fictional Outfitters")
+        { Email = " Buyer@Bluefin.example ", Phone = "555-0300", Status = "Active", Version = 2 };
+    /// <summary>ERP customer upsert outcome to return (Created, Updated, Unchanged, SkippedStale).</summary>
+    public string CustomerOutcome { get; set; } = "Created";
+    /// <summary>When set, the ERP rejects orders with HTTP 422 and this reason code (e.g. UnknownAccount).</summary>
+    public string? RejectOrderCode { get; set; }
+    public List<(string Body, string? SourceVersion, string? ExecutionId)> CustomerPuts { get; } = [];
+    public int ErpCalls { get; private set; }
     public HttpClient CreateClient(string name) => new(this, false) { BaseAddress = new Uri("http://" + name.ToLowerInvariant() + "/") };
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
@@ -137,10 +146,27 @@ public sealed class FakeClients : HttpMessageHandler, IHttpClientFactory
             CrmCalls++;
             if (CrashAfterCrm) throw new InvalidOperationException("simulated worker crash");
             if (MalformedJson) return new(HttpStatusCode.OK) { Content = new StringContent("{ invalid") };
+            if (request.RequestUri.AbsolutePath.StartsWith("/api/customers/"))
+                return new(HttpStatusCode.OK) { Content = JsonContent.Create(Customer) };
             var orderId = Uri.UnescapeDataString(request.RequestUri.Segments[^1]);
             return new(HttpStatusCode.OK) { Content = JsonContent.Create(new CrmOrder(orderId, "C-100", "USD", InvalidOrder ? -1 : Amount)) };
         }
+        ErpCalls++;
+        if (request.Method == HttpMethod.Put && request.RequestUri.AbsolutePath.StartsWith("/api/customers/"))
+        {
+            var body = await request.Content!.ReadAsStringAsync(ct);
+            CustomerPuts.Add((body, request.Headers.TryGetValues("X-Source-Version", out var v) ? v.Single() : null,
+                request.Headers.TryGetValues("X-Execution-Id", out var x) ? x.Single() : null));
+            if (Timeout) throw new TaskCanceledException("simulated");
+            if (Failures-- > 0) return new((HttpStatusCode)FailStatus);
+            var customer = System.Text.Json.JsonSerializer.Deserialize<ErpCustomer>(body, System.Text.Json.JsonSerializerOptions.Web)!;
+            string[] changed = CustomerOutcome == "Updated" ? ["emailAddress"] : CustomerOutcome == "Created" ? ["displayName", "emailAddress"] : [];
+            return new(HttpStatusCode.OK) { Content = JsonContent.Create(new CustomerSyncResult(customer.AccountCode, CustomerOutcome, changed,
+                CustomerOutcome == "SkippedStale" ? 9 : Customer.Version, "SYNC-000001")) };
+        }
         var payload = await request.Content!.ReadAsStringAsync(ct);
+        if (RejectOrderCode is not null)
+            return new(HttpStatusCode.UnprocessableEntity) { Content = JsonContent.Create(new { code = RejectOrderCode, accountCode = "C-300", error = "rejected" }) };
         Payloads.Add(payload);
         if (Timeout) throw new TaskCanceledException("simulated");
         if (Failures-- > 0) return new((HttpStatusCode)FailStatus);

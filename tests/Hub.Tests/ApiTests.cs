@@ -10,6 +10,7 @@ using Hub.Infrastructure;
 using Integration.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +24,8 @@ public class DemoFactory<T> : WebApplicationFactory<T> where T : class
     public static readonly string ServiceKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private readonly string path = Path.Combine(Path.GetTempPath(), $"integration-test-{Guid.NewGuid():N}.db");
     public Dictionary<string, string?> Overrides { get; } = [];
+    /// <summary>Replaces services for one test (e.g. a counting fake IHttpClientFactory).</summary>
+    public Action<IServiceCollection>? ConfigureServices { get; set; }
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
@@ -31,6 +34,7 @@ public class DemoFactory<T> : WebApplicationFactory<T> where T : class
         builder.UseSetting("Services:ApiKey", ServiceKey);
         builder.UseSetting("Worker:Enabled", "false");
         foreach (var (key, value) in Overrides) builder.UseSetting(key, value);
+        builder.ConfigureTestServices(services => ConfigureServices?.Invoke(services));
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string,string?>
         {
             ["Jwt:Key"] = Key, ["Demo:Password"] = Password, ["Services:ApiKey"] = ServiceKey,
@@ -257,7 +261,7 @@ public class MockApiTests
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Service-Key", DemoFactory<MockCrm.Program>.ServiceKey);
         var orders = await client.GetFromJsonAsync<CrmOrder[]>("/api/orders");
-        Assert.Equal(12, orders!.Length);
+        Assert.Equal(15, orders!.Length); // ORD-001…012 plus the lab scenarios ORD-013…015
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/orders",
             new CrmOrder("O-new", "missing", "USD", 1))).StatusCode);
         client.DefaultRequestHeaders.Add("X-Demo-Scenario", "Unavailable");
