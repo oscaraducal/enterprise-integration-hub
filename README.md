@@ -46,7 +46,7 @@ It is also an **interactive integration lab**. You create or edit fictional reco
 | Component | Business meaning | What you can do |
 |---|---|---|
 | **Legacy CRM** (source system) | An existing business application | Dashboard, searchable customer and sales-order tables, record-detail dialogs with revision history, create/edit forms, a schema catalog (Data Tables) and an API Explorer. No integration controls: imports are initiated by the middleware |
-| **Integration Middleware** (integration layer) | My integration work | Retrieve over REST, validate, map, deliver, track execution IDs, retry, prevent duplicates, preview mappings |
+| **Integration Workbench** (integration layer) | My integration work | Its own overview, **Integrations** (list, create, duplicate, versions, import/export), **Connections**, **Mappings**, **Monitoring** (run, retry, investigate) and **Guides**. Opening an integration enters a full-screen Designer |
 | **Modern ERP** (target system) | The receiving application | Dashboard, Customer Master, Sales Orders, Imported Data, Import History, Data Tables and API Explorer; record dialogs show source IDs, import times and execution IDs, and reconcile with the source |
 
 | Scenario | Status | What it demonstrates |
@@ -108,13 +108,17 @@ flowchart LR
 
 **Data flow:** an operator queues a source order or customer (HTTP 202). The worker claims it, then fetches the order from the CRM, validates it, maps it and freezes the payload, then posts it to the ERP with the execution ID. Every stage is persisted to the timeline. Transient failures are rescheduled with backoff until the 3-attempt budget is spent. Permanent failures stop for investigation. ERP idempotency makes replays safe after lost responses or crashes. This is *at-least-once delivery with idempotent acceptance*, not distributed exactly-once.
 
+**Three workspaces (Milestone C.2).** A switcher in the top bar moves between the **Legacy CRM**, the **Integration Workbench** and the **Modern ERP**. Each has its own sidebar and URL (`/crm/customers`, `/workbench/integrations`, `/erp/customer-master`), so browser back/forward and reloads work. Business screens never show integration-authoring tools, and the Workbench only links to CRM/ERP records. See [docs/designer/WORKBENCH.md](docs/designer/WORKBENCH.md#milestone-c2-dedicated-integration-workspace).
+
+![Integration Workbench overview: quick actions, integration and connection counts, recent designs and connection health](docs/screenshots/workbench-overview.png)
+
 Details: [ARCHITECTURE.md](ARCHITECTURE.md) (lifecycle state machine, audit trail, crash recovery, dashboard loading model).
 
 ## Screenshots
 
 All screenshots are real: they were captured by the Playwright browser tests against the running Docker Compose stack (Legacy CRM, Middleware and Modern ERP containers) on Windows 11 with Docker Desktop. CI captures the same images on every run. All data is synthetic.
 
-**Integration monitoring dashboard** shows live metrics, status distribution, the CRM → Middleware → ERP route, and the operator-only run form.
+**Monitoring** (Integration Workbench) shows live metrics, status distribution, the CRM → Middleware → ERP route, and the operator-only run form.
 
 ![Operations overview dashboard with execution metrics, health bar, order synchronization route and run form](docs/screenshots/dashboard.png)
 
