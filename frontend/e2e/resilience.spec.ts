@@ -1,14 +1,8 @@
 import { test, expect, Page, Route } from '@playwright/test';
+import { loginToMonitoring as login } from './helpers';
 // Regression tests for partial outages, stale responses, filters, pagination, sign-out and responsive layout.
 // Upstream failures are injected with page.route so each scenario is deterministic; all data is synthetic.
 
-async function login(page: Page, user = 'operator') {
-  await page.goto('/');
-  await page.getByLabel('Demo account').selectOption(user);
-  await page.getByLabel('Password', { exact: true }).fill(process.env['DEMO_PASSWORD']!);
-  await page.getByRole('button', { name: 'Sign in to console' }).click();
-  await expect(page.getByRole('heading', { name: 'Operations overview' })).toBeVisible();
-}
 const crmDown = (route: Route) => route.fulfill({ status: 502, contentType: 'application/problem+json',
   body: JSON.stringify({ title: 'Mock CRM unavailable', status: 502 }) });
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -37,7 +31,7 @@ test.describe('partial upstream outage', () => {
     await expect(page.getByText('Mock CRM is unavailable, so the source order list may be out of date')).toBeVisible();
     await expect(page.getByRole('alert')).toHaveCount(0); // non-blocking: no error banner
     await expect(source.locator('option').first()).toHaveText(/ORD-001/); // last good data preserved
-    await expect(page.getByRole('heading', { name: 'Recent executions' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Execution history' })).toBeVisible();
     await expect(page.getByRole('region', { name: /Execution history table/ })).toBeVisible();
     await page.screenshot({ path: 'test-results/crm-outage-warning.png' });
     await page.unroute('**/api/orders');
@@ -142,7 +136,7 @@ test.describe('session handling', () => {
     await page.unrouteAll({ behavior: 'ignoreErrors' });
     await login(page, 'viewer');
     await expect(page.getByLabel('Search execution ID')).toHaveValue('');
-    await expect(page.locator('.topbar .role')).toHaveText('Viewer');
+    await expect(page.locator('.global-bar .role')).toHaveText('Viewer');
   });
 
   test('an expired session returns to sign-in with an actionable message', async ({ page }) => {

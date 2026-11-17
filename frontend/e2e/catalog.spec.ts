@@ -1,17 +1,8 @@
 import { test, expect, Page } from '@playwright/test';
+import { login, nav, appNav } from './helpers';
 // Milestone B: Dynamic Data Catalog and schema mapper through the real UI, middleware gateway and CRM/ERP catalogs.
 // Creates only new logical tables (crm_contacts, erp_vendor_accounts) and mapping definitions; built-in demo data is untouched.
 
-async function login(page: Page, user = 'operator') {
-  await page.goto('/');
-  await page.getByLabel('Demo account').selectOption(user);
-  await page.getByLabel('Password', { exact: true }).fill(process.env['DEMO_PASSWORD']!);
-  await page.getByRole('button', { name: 'Sign in to console' }).click();
-  await expect(page.getByRole('heading', { name: 'Operations overview' })).toBeVisible();
-}
-const nav = (page: Page, name: string) => page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name, exact: true }).click();
-const appNav = (page: Page, app: 'Legacy CRM' | 'Modern ERP', name: string) =>
-  page.getByRole('navigation', { name: app + ' navigation' }).getByRole('button', { name, exact: true }).click();
 const dialog = (page: Page, name: string) => page.getByRole('dialog', { name });
 const noOverflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 const mappingRow = (page: Page, target: string) => page.getByRole('row', { name: 'Mapping for ' + target });

@@ -1,18 +1,8 @@
 import { test, expect, Page } from '@playwright/test';
+import { loginToMonitoring as login, nav, appNav } from './helpers';
 // Portfolio lab scenarios through the real UI and the real Legacy CRM, middleware and Modern ERP. Synthetic data only.
 // Uses C-300 (seeded, not yet in ERP), plus C-610 / ORD-610 created here. Expects a fresh demo database.
 
-async function login(page: Page, user = 'operator') {
-  await page.goto('/');
-  await page.getByLabel('Demo account').selectOption(user);
-  await page.getByLabel('Password', { exact: true }).fill(process.env['DEMO_PASSWORD']!);
-  await page.getByRole('button', { name: 'Sign in to console' }).click();
-  await expect(page.getByRole('heading', { name: 'Operations overview' })).toBeVisible();
-}
-const nav = (page: Page, name: string) => page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name, exact: true }).click();
-/** Screen inside the Legacy CRM or Modern ERP application. */
-const appNav = (page: Page, app: 'Legacy CRM' | 'Modern ERP', name: string) =>
-  page.getByRole('navigation', { name: app + ' navigation' }).getByRole('button', { name, exact: true }).click();
 const investigation = (page: Page) => page.getByRole('region', { name: 'Execution investigation' });
 const dialog = (page: Page, name: string) => page.getByRole('dialog', { name });
 const noOverflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);

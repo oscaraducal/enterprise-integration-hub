@@ -1,17 +1,10 @@
 import { test, expect, Page } from '@playwright/test';
+import { login, nav } from './helpers';
 // Milestone C: Integration Designer through the real UI and API. Creates only new flow designs; nothing executes.
 
-async function login(page: Page, user = 'operator') {
-  await page.goto('/');
-  await page.getByLabel('Demo account').selectOption(user);
-  await page.getByLabel('Password', { exact: true }).fill(process.env['DEMO_PASSWORD']!);
-  await page.getByRole('button', { name: 'Sign in to console' }).click();
-  await expect(page.getByRole('heading', { name: 'Operations overview' })).toBeVisible();
-}
-const nav = (page: Page, name: string) => page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name, exact: true }).click();
 const node = (page: Page, label: string) => page.getByRole('button', { name: new RegExp('^' + label) });
 const props = (page: Page) => page.getByRole('complementary', { name: 'Properties' });
-const status = (page: Page) => page.getByRole('toolbar', { name: 'Designer toolbar' });
+const status = (page: Page) => page.getByRole('region', { name: 'Integration header' });
 const problems = (page: Page) => page.getByRole('region', { name: 'Designer panel' });
 /** New integration wizard: Manual practice from a starter template (templates are an explicit, optional choice). */
 async function createFromTemplate(page: Page, button: string, name: string, template: RegExp) {
@@ -25,6 +18,12 @@ async function createFromTemplate(page: Page, button: string, name: string, temp
   await w.getByRole('radio', { name: template }).click();
   await w.getByRole('button', { name: 'Create', exact: true }).click();
 }
+/** Opens an integration from the Integrations list in the full-screen Designer. */
+const openIntegration = async (page: Page, title: string) => {
+  await nav(page, 'Integrations');
+  await page.getByRole('button', { name: 'Open designer for ' + title, exact: true }).click();
+  await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible();
+};
 const noOverflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 
 test.describe.configure({ mode: 'serial' });
@@ -84,7 +83,7 @@ test('Create a flow from a template, edit it with undo/redo, drag actions in, va
 test('Field mapper: drag a source field onto a target field, preview and apply', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await login(page);
-  await nav(page, 'Integration Designer');
+  await openIntegration(page, 'Customer Sync');
   await node(page, 'Map mapCustomer').click();
   await props(page).getByRole('button', { name: 'Open field mapper' }).click();
   const mapper = page.getByRole('dialog', { name: 'Field mapper' });
@@ -114,7 +113,7 @@ test('Nested logic, search, collapse, zoom, expression builder and export', asyn
   await page.setViewportSize({ width: 1600, height: 1000 });
   await login(page);
   await nav(page, 'Integration Designer');
-  await createFromTemplate(page, '+ New integration', 'Order Review', /Review CRM orders/);
+  await createFromTemplate(page, 'Create integration', 'Order Review', /Review CRM orders/);
   await expect(node(page, 'For Each eachOrder')).toBeVisible();
   await expect(node(page, 'Logger logReady')).toBeVisible();
   await page.getByLabel('Search actions').fill('logUnsupported');
@@ -137,6 +136,8 @@ test('Nested logic, search, collapse, zoom, expression builder and export', asyn
   await expect(props(page).getByRole('status').filter({ hasText: 'Syntax OK' })).toBeVisible();
   // A variable from outside its scope is reported.
   await node(page, 'Logger logSummary').click();
+  // The properties panel re-renders for the newly selected action before typing (the app renders asynchronously).
+  await expect(props(page).getByRole('heading', { name: 'logSummary' })).toBeVisible();
   await props(page).getByLabel('Message', { exact: true }).fill('$order.id');
   await expect(problems(page)).toContainText('unknown variable $order');
   await page.getByRole('button', { name: 'Undo' }).click();
@@ -150,10 +151,12 @@ test('Nested logic, search, collapse, zoom, expression builder and export', asyn
 
 test('Viewers can open designs but not change them, and the designer fits a phone', async ({ page }) => {
   await login(page, 'viewer');
-  await nav(page, 'Integration Designer');
+  await nav(page, 'Integrations');
+  await expect(page.getByRole('button', { name: 'Create integration' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Duplicate / })).toHaveCount(0);
+  await openIntegration(page, 'Customer Sync');
   await expect(node(page, 'Trigger start')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save draft' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '+ New integration' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add Logger' })).toBeDisabled();
   await node(page, 'Invoke readCustomer').click();
   await expect(props(page).getByLabel('Action name')).toBeDisabled();
@@ -170,6 +173,6 @@ test('Designer guides are listed as Design only and open the Integration Designe
   await card.getByRole('button', { name: 'Open guide' }).click();
   await expect(page.getByRole('heading', { name: 'Design the customer master flow' })).toBeVisible();
   for (const id of ['DSN-002', 'DSN-003']) await expect(page.getByRole('tab', { name: id })).toBeVisible();
-  await page.getByRole('button', { name: 'Open Designer →' }).first().click();
-  await expect(page.getByRole('heading', { name: 'Integration Designer', exact: true, level: 1 })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Integrations →' }).first().click();
+  await expect(page.getByRole('heading', { name: 'Integrations', exact: true, level: 1 })).toBeVisible();
 });

@@ -1,11 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-async function login(page: Page, user = 'operator') {
-  await page.goto('/');
-  await page.getByLabel('Demo account').selectOption(user);
-  await page.getByLabel('Password', { exact: true }).fill(process.env['DEMO_PASSWORD']!);
-  await page.getByRole('button', { name: 'Sign in to console' }).click();
-  await expect(page.getByRole('heading', { name: 'Operations overview' })).toBeVisible();
-}
+import { loginToMonitoring as login } from './helpers';
 test('order travels through real mock APIs and shows a receipt and timeline', async ({ page }) => {
   await login(page);
   await page.getByLabel('Source order').selectOption('ORD-001');

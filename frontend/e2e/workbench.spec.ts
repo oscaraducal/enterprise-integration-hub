@@ -1,20 +1,19 @@
 import { test, expect, Page } from '@playwright/test';
+import { login, nav } from './helpers';
 // Milestone C.1: Connections, blank integrations, endpoint wizards, context-aware mapping points, inline + insertion,
 // Vertical/Horizontal/Outline layouts and schedule design. Designing never executes anything.
 
-async function login(page: Page, user = 'operator') {
-  await page.goto('/');
-  await page.getByLabel('Demo account').selectOption(user);
-  await page.getByLabel('Password', { exact: true }).fill(process.env['DEMO_PASSWORD']!);
-  await page.getByRole('button', { name: 'Sign in to console' }).click();
-  await expect(page.getByRole('heading', { name: 'Operations overview' })).toBeVisible();
-}
-const nav = (page: Page, name: string) => page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name, exact: true }).click();
 const node = (page: Page, label: string) => page.getByRole('button', { name: new RegExp('^' + label) });
 const props = (page: Page) => page.getByRole('complementary', { name: 'Properties' });
 const problems = (page: Page) => page.getByRole('region', { name: 'Designer panel' });
 const slot = (page: Page, where: string) => page.getByRole('button', { name: 'Insert action at ' + where, exact: true });
-const picker = (page: Page) => page.getByRole('dialog', { name: /^Insert action at/ });
+const picker = (page: Page) => page.getByRole('dialog', { name: 'Add action' });
+/** Opens an integration from the Integrations list in the full-screen Designer. */
+async function openIntegration(page: Page, title: string) {
+  await nav(page, 'Integrations');
+  await page.getByRole('button', { name: 'Open designer for ' + title, exact: true }).click();
+  await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible();
+}
 
 async function createConnection(page: Page, name: string, role: RegExp, app: string, test = true) {
   await page.getByRole('button', { name: '+ Create connection' }).click();
@@ -33,7 +32,7 @@ async function createConnection(page: Page, name: string, role: RegExp, app: str
   await expect(page.getByRole('status').filter({ hasText: 'saved' })).toBeVisible();
 }
 async function newIntegration(page: Page, type: RegExp, name: string) {
-  await page.getByRole('button', { name: /New integration|Create your first integration/ }).first().click();
+  await page.getByRole('button', { name: /^Create (your first )?integration$/ }).first().click();
   const w = page.getByRole('dialog', { name: 'New integration' });
   await w.getByRole('radio', { name: type }).click();
   await w.getByRole('button', { name: 'Next' }).click();
@@ -110,7 +109,7 @@ test('A new Application integration starts blank; configure the trigger and add 
 
   // + → Connections / Invokes: a GET operation inserts an Invoke without a mapping.
   await slot(page, 'main flow, position 1').click();
-  await picker(page).getByRole('tab', { name: 'Connections / Invokes' }).click();
+  await picker(page).getByRole('tab', { name: 'Invokes' }).click();
   await picker(page).getByRole('button', { name: 'Invoke Legacy CRM REST' }).click();
   const iw = page.getByRole('dialog', { name: 'Invoke endpoint wizard' });
   await expect(iw.getByRole('radio', { name: 'Legacy CRM REST' })).toHaveAttribute('aria-checked', 'true');
@@ -135,7 +134,7 @@ test('A new Application integration starts blank; configure the trigger and add 
 
   // A body operation adds an unconfigured request mapping directly before the Invoke.
   await slot(page, 'main flow, position 2').click();
-  await picker(page).getByRole('tab', { name: 'Connections / Invokes' }).click();
+  await picker(page).getByRole('tab', { name: 'Invokes' }).click();
   await picker(page).getByRole('button', { name: 'Invoke Modern ERP REST' }).click();
   await wizardNext(page, 'Invoke endpoint wizard');
   await page.getByRole('dialog', { name: 'Invoke endpoint wizard' }).getByRole('radio', { name: /^PUT/ }).click();
@@ -169,16 +168,15 @@ test('A new Application integration starts blank; configure the trigger and add 
 
   // Nested +: Scope, then Re-throw only inside its fault handler; End actions only at the end of a path.
   await slot(page, 'main flow, position 4').click();
-  await picker(page).getByRole('tab', { name: 'Logic' }).click();
+  await picker(page).getByRole('tab', { name: 'Actions' }).click();
   await picker(page).getByRole('button', { name: 'Scope', exact: true }).click();
   await slot(page, 'main flow, position 1').click();
-  await picker(page).getByRole('tab', { name: 'Error Handling' }).click();
+  await picker(page).getByRole('tab', { name: 'Actions' }).click();
   await expect(picker(page).getByRole('button', { name: 'Re-throw Fault (unavailable)' })).toBeDisabled();
-  await picker(page).getByRole('tab', { name: 'End Actions' }).click();
   await expect(picker(page).getByRole('button', { name: 'Return (unavailable)', exact: true })).toBeDisabled();
   await picker(page).getByRole('button', { name: 'Close action picker' }).click();
   await slot(page, 'Fault handler, position 1').click();
-  await picker(page).getByRole('tab', { name: 'Error Handling' }).click();
+  await picker(page).getByRole('tab', { name: 'Actions' }).click();
   await picker(page).getByRole('button', { name: 'Re-throw Fault', exact: true }).click();
   await expect(node(page, 'Re-throw Fault rethrow')).toBeVisible();
   await expect(problems(page)).not.toContainText('only valid inside a fault handler');
@@ -192,8 +190,7 @@ test('A new Application integration starts blank; configure the trigger and add 
 test('Vertical, Horizontal and Outline layouts present the same flow and the choice is remembered', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await login(page);
-  await nav(page, 'Integration Designer');
-  await page.getByLabel('Flow', { exact: true }).selectOption('account-sync');
+  await openIntegration(page, 'Account Sync');
   await problems(page).getByRole('tab', { name: 'JSON' }).click();
   const before = await problems(page).getByLabel('Flow JSON').innerText();
   const layout = page.getByRole('radiogroup', { name: 'Layout' });
@@ -209,11 +206,11 @@ test('Vertical, Horizontal and Outline layouts present the same flow and the cho
   await expect(outline.getByRole('button', { name: /^Outline Re-throw Fault/ })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/readme-layout-outline.png' });
   expect(await problems(page).getByLabel('Flow JSON').innerText()).toBe(before); // presentation never changes the definition
-  await expect(page.getByRole('toolbar', { name: 'Designer toolbar' })).toContainText('Saved'); // and is not a draft change
+  await expect(page.getByRole('region', { name: 'Integration header' })).toContainText('Saved'); // and is not a draft change
   // The preference is per viewer and survives a new session.
   await page.getByRole('button', { name: 'Sign out' }).click();
   await login(page);
-  await nav(page, 'Integration Designer');
+  await openIntegration(page, 'Account Sync');
   await expect(page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: 'Outline' })).toHaveAttribute('aria-checked', 'true');
   await page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: 'Vertical' }).click();
 });
@@ -249,8 +246,7 @@ test('Viewers can inspect connections and designs but not change them', async ({
   await expect(details.getByRole('button', { name: 'Test' })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(details).toHaveCount(0);
-  await nav(page, 'Integration Designer');
-  await page.getByLabel('Flow', { exact: true }).selectOption('account-sync');
+  await openIntegration(page, 'Account Sync');
   await expect(page.getByRole('button', { name: /^Insert action at/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Configure trigger…' })).toHaveCount(0);
 });
