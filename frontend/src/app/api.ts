@@ -11,7 +11,7 @@ export class ApiError extends Error {
   /** ASP.NET validation problem → { field: [messages] }. */
   get fieldErrors(): Record<string, string[]> { return this.body?.errors ?? {}; }
 }
-export type View = 'Overview' | 'Source System' | 'Scenarios' | 'Mapping Studio' | 'Target System' | 'Executions' | 'Workloads' | 'Guides';
+export type View = 'Overview' | 'Source System' | 'Scenarios' | 'Integration Designer' | 'Mapping Studio' | 'Target System' | 'Executions' | 'Workloads' | 'Guides';
 export type RecordKind = 'customer' | 'order';
 /** Cross-page navigation request, e.g. "open customer C-300 in the Mapping Studio". */
 export interface Focus {

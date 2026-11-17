@@ -50,6 +50,7 @@
         }
         @if(view() === 'Source System'){ <app-source [api]="api" [focus]="focus()" [refreshTick]="tick()"></app-source> }
         @else if(view() === 'Target System'){ <app-target [api]="api" [focus]="focus()" [refreshTick]="tick()" (inspect)="openExecution($event)" (open)="go($event)"></app-target> }
+        @else if(view() === 'Integration Designer'){ <app-designer [api]="api"></app-designer> }
         @else if(view() === 'Mapping Studio'){ <app-mapping [api]="api" [focus]="focus()" (inspect)="openExecution($event)"></app-mapping> }
         @else if(view() === 'Scenarios'){ <app-scenarios mode="catalog" (open)="go($event)"></app-scenarios> }
         @else if(view() === 'Guides'){ <app-scenarios mode="guides" [scenario]="focus()?.scenario" (open)="go($event)"></app-scenarios> }
