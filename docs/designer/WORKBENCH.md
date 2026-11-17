@@ -1,4 +1,4 @@
-# Integration Workbench (Milestones C.1 and C.2)
+# Integration Workbench (Milestones C.1, C.2 and C.3)
 
 Milestone C.1 makes authoring feel familiar to integration developers used to orchestration tools such as Oracle Integration 3. It keeps this project's own branding, components and code, and stays local-only. **Nothing executes yet**: running flows is Milestone D.
 
@@ -167,3 +167,116 @@ Separately, the Designer now applies only the newest validation response, so a s
 | Full-screen Designer with back navigation and unsaved-change handling (save, keep, discard, stay) | Implemented |
 | Anchored Add action popup (Suggestions, Invokes, Actions, search, keyboard, bottom sheet) | Implemented |
 | Running designed integrations, activating triggers, schedules | Deferred to Milestone D and later |
+
+## Milestone C.3: project workspace, movable canvas and endpoint wizard
+
+### What Oracle Integration 3 does, and how it maps here
+
+| OIC 3 pattern (official documentation) | Here (original implementation) |
+|---|---|
+| A **Projects** page; a project holds **Integrations, Connections, Lookups and Libraries** with **Design / Deploy / Observe** tabs ([projects workspace](https://docs.oracle.com/en/cloud/paas/application-integration/integrations-user/tour-projects-workspace.html), [first integration](https://docs.oracle.com/en/cloud/paas/application-integration/integrations-user/build-your-first-integration-from-scratch.html)) | **Projects** card → the default **Practice Project**: Integrations and Connections sections with counts, recent changes and Create/Open actions; Lookups and Libraries shown as *Planned*; **Design / Observe** tabs (Deploy is out of scope) |
+| Integrations are created *inside* a project and open the canvas | Create from the project, Integrations page or home; opening from the project returns to the project (`?from=project`) |
+| The canvas offers Vertical, Horizontal and Outline layouts, a box with zoom in/out, 100% and fit, a graphical overview, search, and collapse of containers ([canvas](https://docs.oracle.com/en/cloud/paas/application-integration/integrations-user/create-orchestrated-integration.html)) | Same set, plus pointer panning, Ctrl + wheel zoom at the pointer, center selected and previous view; an **overview map** in the canvas corner |
+| Actions are added with the inline **+** (Suggestions / Invokes / Actions) or from the actions pane; configuration opens in panels | C.2 floating **+** popup, kept; left panel lists **Connections** and **Actions** (drag onto a + or click) |
+| The REST **Adapter Endpoint Configuration Wizard** shows pages only when they apply: no Request page for GET/DELETE, Parameters only when there are parameters, Summary last ([REST invoke](https://docs.oracle.com/en/cloud/paas/application-integration/rest-adapter/add-rest-adapter-invoke-connection.html)) | The Invoke wizard computes its steps from the chosen operation; values survive Back/Next |
+
+### Navigation
+
+- **No sidebar in the Integration Workbench.** The top bar holds branding, the workspace switcher and the account controls. Each Workbench page shows breadcrumbs (`Integration Workbench / Projects / Practice Project`) and a compact resource bar: Home, Projects, Integrations, Connections, Mappings, Monitoring, Guides. On phones the bar scrolls horizontally.
+- **Legacy CRM and Modern ERP** keep their business-application sidebars.
+- **Home** is card-first:
+  - Projects, Integrations, Connections, Mappings, Monitoring and Guides are cards that open their page, with live counts.
+  - Lookups and Libraries are *Planned* cards that explain what exists today. They are not buttons.
+  - Below the cards: recent designs, connection health, validation problems, and recent runs of the built-in samples.
+  - Pages use up to 1880 px on wide monitors.
+- **Projects:** `/workbench/projects` and `/workbench/projects/practice`. The practice project groups every existing integration and connection *without* moving, renaming or re-owning them. It needs no new persistence, so no references can break.
+
+![Integration Workbench home](../screenshots/workbench-home.png)
+![Practice Project](../screenshots/workbench-project.png)
+
+### The Designer as its own workspace
+
+- **Opening an integration:** `/workbench/integrations/{name}` hides all Workbench navigation. The header shows:
+  - Back to Integrations or Back to project;
+  - a breadcrumb, the name, identifier and version;
+  - draft or published status and validation;
+  - Save draft, Publish and Export.
+- **Collapsible panels:**
+  - left: Connections and Actions;
+  - right: Properties;
+  - bottom: Problems, Variables, Versions, JSON and Execution.
+
+  The canvas fills the rest of the window. Toggling a side panel keeps the same point of the flow in the middle.
+
+### Moving around large flows
+
+- **How it works.** The canvas uses CSS `zoom` (it used a `transform` before). Scroll extents, element rectangles, pointer coordinates and the anchored + popup all match what is drawn. The viewport is the scroll container: wheel and trackpad scroll natively, and panning only changes the scroll position. The flow model, node IDs and insertion points are untouched.
+- **Ways to pan:**
+  - drag the empty background (including empty space inside branches);
+  - hold **Space** and drag anywhere;
+  - drag with the middle button;
+  - turn on **Hand mode** (✋).
+
+  A drag that pans never selects, deselects or moves an action.
+- **Moving actions** works by dragging the card header. Card bodies and branch areas are background. In hand or Space mode, dragging a card pans instead.
+- **Zoom:** Ctrl + wheel (or pinch) zooms around the pointer. The toolbar zooms around the centre, from 10% to 200%.
+- **Navigation tools:**
+  - **Fit** (⤢) shows the whole flow.
+  - **Center selected** (⌖) brings the selected action to the middle.
+  - **Search + Enter** selects and centres a match.
+  - **Previous view** (⟲) returns to where you were before a fit, center or search, so you can edit something and go back.
+  - Collapsing or expanding a container keeps it at the same place on screen.
+  - The **overview map** draws every action and the visible window; click or drag on it to move.
+- **Two defects found by the new tests and fixed:**
+  - **The drag stuck at the canvas edge.** A background drag also started a native text selection, and its autoscroll fought the pan once the pointer left the canvas. Pan starts now cancel the default action, and the drag follows document-level pointer events.
+  - **Space+drag never armed.** Angular binds only one method per host event, so a second `document:keydown` listener was silently ignored. Space is now handled by the single keydown listener.
+
+![Long flow after search and center](../screenshots/workbench-canvas-long-flow.png)
+![Long flow, horizontal layout, panned](../screenshots/workbench-canvas-horizontal.png)
+
+### Action cards
+
+- Each card shows its icon, its **action type** (for example, LOGGER or INVOKE), name and a configuration summary.
+- Invokes and REST triggers show a **connection chip**.
+- Errors appear as a red border and badge count, warnings as a `!` badge.
+- The selected card is highlighted. Branch labels and connector lines are clearer.
+
+### Invoke and trigger endpoint wizard
+
+- **Layout:**
+  - a content-sized dialog, about 860 px instead of 1100 px, which becomes a bottom sheet on phones;
+  - a vertical stepper with done (✓), current and upcoming states;
+  - a short explanation per step;
+  - a sticky footer with Cancel, Back, and Next or Finish.
+- **Only the applicable steps:**
+  - no Request step for GET (and DELETE), or for operations without a body;
+  - no Parameters step when an operation has no parameters;
+  - in trigger mode, no Request step for GET.
+- **Navigation is by step name.** Going back keeps the connection, operation, key and limit.
+- **Connection step:**
+  - compact connection cards;
+  - a search box when more than four connections fit the role;
+  - a "Selected" line confirming that addresses and credentials stay in the Hub.
+- **Validation sits next to its field:**
+  - a missing path key shows a warning;
+  - an out-of-range limit, a bad endpoint name or a bad path shows an error that blocks Next.
+- **Unchanged behaviour:**
+  - discovery of operations and schemas;
+  - request-mapping insertion for body operations;
+  - the impact dialog when an Invoke changes. Mapping rules are never deleted.
+
+![Invoke wizard](../screenshots/workbench-invoke-wizard.png)
+
+### Status (C.3)
+
+| Capability | Status |
+|---|---|
+| Card-first Workbench home, resource bar, breadcrumbs, no Workbench sidebar | Implemented |
+| Projects list and the default Practice Project (Design and Observe tabs) | Implemented (grouping only; no project persistence) |
+| Creating, renaming, sharing and deploying projects | Planned |
+| Lookups (named code-value tables) | Planned |
+| Libraries (reusable safe-function libraries; arbitrary JavaScript will never run) | Planned |
+| Full-window Designer with collapsible palette/connections, properties and bottom panels | Implemented |
+| Panning (background, Space, middle button, hand mode), Ctrl + wheel zoom at pointer, fit, center, previous view, search, overview map | Implemented |
+| Endpoint wizard redesign (applicable steps, state kept, field-level validation, responsive) | Implemented |
+| Running integrations and runtime instances | Milestone D (Monitoring) |
