@@ -71,6 +71,9 @@ public partial class Program
             var history = await db.History.AsNoTracking().Where(x => x.AccountCode == code).OrderByDescending(x => x.Id).Take(50).ToListAsync();
             return Results.Ok(new { customer, history });
         });
+        // Import history across all accounts, newest first and bounded, for the ERP Import History screen.
+        app.MapGet("/api/history", async (int? take, ErpDb db) =>
+            await db.History.AsNoTracking().OrderByDescending(x => x.Id).Take(Math.Clamp(take ?? 100, 1, 200)).ToListAsync());
         // Integration import (upsert). Policy: create if missing; apply when the source version is the same or newer;
         // never let an older source version overwrite a newer one; identical data is recorded as Unchanged.
         app.MapPut("/api/customers/{code}", async (string code, ErpCustomer input, HttpRequest request, HttpResponse response,

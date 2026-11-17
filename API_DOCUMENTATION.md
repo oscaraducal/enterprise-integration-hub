@@ -134,6 +134,7 @@ The dashboard calls only the middleware. The middleware forwards to **fixed** CR
 | GET | /api/target/customers · /api/target/customers/{code} | Viewer/Operator | Modern ERP customer master; detail includes `history` |
 | PUT | /api/target/fixtures/customers/{code} | Operator | Manual edit of **fixture** records only (409 `NotAFixture` otherwise); audited as `FixtureEdit` with the operator name |
 | GET | /api/target/orders · /api/target/orders/{id} | Viewer/Operator | Imported orders with stored mapped fields |
+| GET | /api/target/history?take= | Viewer/Operator | Import history across all ERP accounts, newest first (`take` 1–200, default 100) |
 | GET | /api/mappings | Viewer/Operator | Field-mapping catalog rendered by the Mapping Studio |
 | POST | /api/mappings/{customer\|sales-order}/preview | Viewer/Operator | `{ "sourceId": "C-300" }` (reads the CRM) or `{ "source": { … } }` (inline). Returns `{ input, output, errors[{field,message}], valid, notes }`. **No execution, no writes, no ERP call** |
 
@@ -163,5 +164,6 @@ Customer JSON: `{ "customerId", "customerName", "email", "phone", "status", "ver
 | GET | /api/customers · /api/customers/{code} | Customer master; detail `{ customer, history }` |
 | PUT | /api/customers/{code} | Integration upsert. Headers `X-Execution-Id`, `X-Source-Version`. Response `{ accountCode, outcome: Created\|Updated\|Unchanged\|SkippedStale, changedFields, appliedVersion, receiptId }` |
 | PUT | /api/fixtures/customers/{code} | Fixture-only manual edit; `X-Actor` recorded |
+| GET | /api/history?take= | Customer-master history across all accounts, newest first (`take` clamped to 1–200, default 100) |
 
 New error classes: `MissingCustomer` (422 UnknownAccount), `TargetRejected` (other 422). Both are permanent; see the [scenario docs](docs/scenarios/README.md).

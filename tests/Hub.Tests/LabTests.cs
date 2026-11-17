@@ -326,6 +326,12 @@ public class LabMockApiTests
         Assert.Equal(["SkippedStale", "Updated", "Unchanged", "Created"],
             detail.GetProperty("history").EnumerateArray().Select(h => h.GetProperty("action").GetString()!).ToArray());
         Assert.Equal(1, (await client.GetFromJsonAsync<JsonElement[]>("/api/customers"))!.Count(c => c.GetProperty("accountCode").GetString() == "C-300"));
+        // Global import history (ERP Import History screen): newest first across accounts, bounded by take.
+        var all = (await client.GetFromJsonAsync<JsonElement[]>("/api/history"))!;
+        Assert.Equal("SkippedStale", all[0].GetProperty("action").GetString());
+        Assert.Contains(all, h => h.GetProperty("action").GetString() == "FixtureSeeded");
+        Assert.Equal(2, (await client.GetFromJsonAsync<JsonElement[]>("/api/history?take=2"))!.Length);
+        Assert.Single((await client.GetFromJsonAsync<JsonElement[]>("/api/history?take=0"))!);
     }
     [Fact]
     public async Task ERP_stores_mapped_orders_and_enforces_account_rules()

@@ -84,7 +84,7 @@ Middleware → systems (service key, fixed routes):
 | `PUT {erp}/api/customers/{accountCode}` with the mapped JSON | `X-Execution-Id`, `X-Source-Version` | `{ accountCode, outcome, changedFields, appliedVersion, receiptId }` |
 
 ## End-to-end process
-1. Operator clicks **Sync to Modern ERP** (Legacy CRM page) or **Run this integration** (Mapping Studio). The execution is queued with `Queued … Automatic retry budget: 3 attempts.`
+1. Operator starts the sync from the Integration Hub: **Run this integration** (Mapping Studio) or the **Run an integration** console (Executions → *SCN-001/003 · Customer sync*). The Legacy CRM itself has no integration controls. The execution is queued with `Queued … Automatic retry budget: 3 attempts.`
 2. The worker claims it. `Started`: attempt 1 of 3.
 3. `Retrieved`: customer C-300 version 1.
 4. `Mapped`: the payload and version are validated and frozen.

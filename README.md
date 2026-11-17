@@ -45,9 +45,9 @@ It is also an **interactive integration lab**. You create or edit fictional reco
 
 | Component | Business meaning | What you can do |
 |---|---|---|
-| **Legacy CRM** (source system) | An existing business application | Create and edit customers and sales orders; every customer edit is versioned with a revision history |
+| **Legacy CRM** (source system) | An existing business application | Dashboard, searchable customer and sales-order tables, record-detail dialogs with revision history, create/edit forms, a schema catalog (Data Tables) and an API Explorer. No integration controls: imports are initiated by the middleware |
 | **Integration Middleware** (integration layer) | My integration work | Retrieve over REST, validate, map, deliver, track execution IDs, retry, prevent duplicates, preview mappings |
-| **Modern ERP** (target system) | The receiving application | Browse imported customers and orders, their source IDs, import times and execution IDs; reconcile them with the source |
+| **Modern ERP** (target system) | The receiving application | Dashboard, Customer Master, Sales Orders, Imported Data, Import History, Data Tables and API Explorer; record dialogs show source IDs, import times and execution IDs, and reconcile with the source |
 
 | Scenario | Status | What it demonstrates |
 |---|---|---|

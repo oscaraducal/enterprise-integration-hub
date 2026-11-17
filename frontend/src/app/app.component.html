@@ -48,7 +48,7 @@
             }</ul>
           </div>
         }
-        @if(view() === 'Source System'){ <app-source [api]="api" [focus]="focus()" [refreshTick]="tick()" (inspect)="openExecution($event)" (open)="go($event)"></app-source> }
+        @if(view() === 'Source System'){ <app-source [api]="api" [focus]="focus()" [refreshTick]="tick()"></app-source> }
         @else if(view() === 'Target System'){ <app-target [api]="api" [focus]="focus()" [refreshTick]="tick()" (inspect)="openExecution($event)" (open)="go($event)"></app-target> }
         @else if(view() === 'Mapping Studio'){ <app-mapping [api]="api" [focus]="focus()" (inspect)="openExecution($event)"></app-mapping> }
         @else if(view() === 'Scenarios'){ <app-scenarios mode="catalog" (open)="go($event)"></app-scenarios> }
@@ -73,18 +73,23 @@
             </section>
           }
           @if(role() === 'Operator'){
-            <section class="panel launch" aria-label="Run an integration"><div class="section-heading"><div><h2>Run an integration</h2><p class="hint">Choose a source order and an optional failure scenario.</p></div><span class="demo-tag">SANDBOX</span></div>
-              @if(section('orders').error){
+            <section class="panel launch" id="run-console" aria-label="Run an integration"><div class="section-heading"><div><h2>Run an integration</h2><p class="hint">The Integration Hub initiates every import: it reads the Legacy CRM, maps the record and delivers it to the Modern ERP.</p></div><span class="demo-tag">SANDBOX</span></div>
+              @if(section('orders').error && runKind() === 'SalesOrder'){
                 <p class="inline-warning" role="status">Mock CRM is unavailable, so the source order list {{orders().length ? 'may be out of date' : 'could not be loaded'}}. Execution history and investigation still work.</p>
               }
               <form (ngSubmit)="run()" class="run-form">
-                <label>Source order<select name="order" [(ngModel)]="orderId" required>@for(order of orders(); track order.id){ <option [value]="order.id">{{order.id}} · {{order.currency}} {{order.amount}}</option> } @empty { <option value="">No source orders available</option> }</select></label>
+                <label>Integration<select name="runKind" aria-label="Integration" [ngModel]="runKind()" (ngModelChange)="prepareRun($event)"><option value="SalesOrder">SCN-002 · Sales order import</option><option value="CustomerSync">SCN-001/003 · Customer sync</option></select></label>
+                @if (runKind() === 'SalesOrder') {
+                  <label>Source order<select name="order" [(ngModel)]="orderId" required>@for(order of orders(); track order.id){ <option [value]="order.id">{{order.id}} · {{order.currency}} {{order.amount}}</option> } @empty { <option value="">No source orders available</option> }</select></label>
+                } @else {
+                  <label>Source customer<select name="customer" [(ngModel)]="customerId" required>@for(id of customerIds(); track id){ <option [value]="id">{{id}}</option> } @empty { <option value="">No source customers available</option> }</select></label>
+                }
                 <label>Environment<select name="runEnv" [(ngModel)]="runEnvironment"><option>DEV</option><option>TEST</option></select></label>
-                <label>Scenario<select aria-label="Scenario" name="scenario" [(ngModel)]="scenario">@for(s of scenarios; track s){<option>{{s}}</option>}</select></label>
+                <label>Scenario<select aria-label="Scenario" name="scenario" [(ngModel)]="scenario">@for(s of scenarios; track s){ @if (s !== 'Duplicate' || runKind() === 'SalesOrder') {<option>{{s}}</option>} }</select></label>
                 <label>Target<select name="target" [(ngModel)]="target" [disabled]="scenario === 'Validation' || scenario === 'Duplicate'"><option>ERP</option><option>CRM</option></select></label>
                 <label>Fail first attempts<select name="failures" [(ngModel)]="failures"><option [ngValue]="1">1 · recover</option><option [ngValue]="2">2 · recover</option><option [ngValue]="3">3 · exhaust</option></select></label>
-                <button mat-flat-button type="submit" [disabled]="busy() || !orderId">Run integration →</button>
-              </form><p class="hint">Validation runs against CRM; Duplicate runs against ERP. Each source order is tracked once.</p>
+                <button mat-flat-button type="submit" [disabled]="busy() || !(runKind() === 'SalesOrder' ? orderId : customerId)">Run integration →</button>
+              </form><p class="hint">Scenario simulates a failure (None runs normally). Validation runs against CRM; Duplicate runs against ERP. Each source record has one active execution.</p>
             </section>
           }
           <section class="panel execution-panel" aria-labelledby="history-heading"><div class="section-heading"><h2 id="history-heading">{{view() === 'Overview' ? 'Recent executions' : 'Execution history'}}</h2><span class="muted" aria-live="polite">{{total()}} results{{filtersActive() ? ' · filtered' : ''}}</span></div>

@@ -40,6 +40,8 @@ public static class PortfolioEndpoints
             ValidId(id) ? Forward(f, "CRM", HttpMethod.Put, $"api/customers/{Uri.EscapeDataString(id)}", input, ct) : Task.FromResult(Results.BadRequest()))
             .RequireAuthorization("Operate").RequireRateLimiting("mutations");
         source.MapGet("/orders", (IHttpClientFactory f, CancellationToken ct) => Forward(f, "CRM", HttpMethod.Get, "api/orders", null, ct));
+        source.MapGet("/orders/{id}", (string id, IHttpClientFactory f, CancellationToken ct) =>
+            ValidId(id) ? Forward(f, "CRM", HttpMethod.Get, $"api/orders/{Uri.EscapeDataString(id)}", null, ct) : Task.FromResult(Results.BadRequest()));
         source.MapPost("/orders", (CrmOrder input, IHttpClientFactory f, CancellationToken ct) =>
             Forward(f, "CRM", HttpMethod.Post, "api/orders", input, ct)).RequireAuthorization("Operate").RequireRateLimiting("mutations");
         source.MapPut("/orders/{id}", (string id, CrmOrder input, IHttpClientFactory f, CancellationToken ct) =>
@@ -58,6 +60,10 @@ public static class PortfolioEndpoints
         target.MapGet("/orders", (IHttpClientFactory f, CancellationToken ct) => Forward(f, "ERP", HttpMethod.Get, "api/orders", null, ct));
         target.MapGet("/orders/{id}", (string id, IHttpClientFactory f, CancellationToken ct) =>
             ValidId(id) ? Forward(f, "ERP", HttpMethod.Get, $"api/orders/{Uri.EscapeDataString(id)}", null, ct) : Task.FromResult(Results.BadRequest()));
+
+        // Read-only, bounded import audit across all ERP accounts (the ERP Import History screen).
+        target.MapGet("/history", (int? take, IHttpClientFactory f, CancellationToken ct) =>
+            Forward(f, "ERP", HttpMethod.Get, $"api/history?take={Math.Clamp(take ?? 100, 1, 200)}", null, ct));
 
         // ----- Mapping Studio -----
         api.MapGet("/mappings", () => new

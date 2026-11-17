@@ -28,10 +28,10 @@ const emptySections = (): Record<Section, SectionState> => ({
 
 const VIEWS: { name: View; icon: string; title: string; subtitle: string }[] = [
   { name: 'Overview', icon: '◫', title: 'Operations overview', subtitle: 'Monitor the flow. Find the failure. Keep orders moving.' },
-  { name: 'Source System', icon: '◧', title: 'Legacy CRM', subtitle: 'Source system: create and edit fictional customers and sales orders.' },
+  { name: 'Source System', icon: '◧', title: 'Legacy CRM', subtitle: 'Source application: manages fictional customers and sales orders and exposes them over REST.' },
   { name: 'Scenarios', icon: '❖', title: 'Integration scenarios', subtitle: 'Business cases, mappings and verification for each integration.' },
   { name: 'Mapping Studio', icon: '⇆', title: 'Mapping Studio', subtitle: 'Source fields, transformation rules and target fields, with a side-effect-free preview.' },
-  { name: 'Target System', icon: '◨', title: 'Modern ERP', subtitle: 'Target system: inspect imported records and reconcile them with the source.' },
+  { name: 'Target System', icon: '◨', title: 'Modern ERP', subtitle: 'Target application: stores the records the Integration Hub imports, with full traceability.' },
   { name: 'Executions', icon: '⇄', title: 'Execution explorer', subtitle: 'Monitor the flow. Find the failure. Keep orders moving.' },
   { name: 'Workloads', icon: '▤', title: 'Workload monitor', subtitle: 'Fictional DEV and TEST job history. No external scheduler connection.' },
   { name: 'Guides', icon: '☰', title: 'Scenario guides', subtitle: 'Step-by-step walkthroughs with links straight to each screen.' },
@@ -75,6 +75,9 @@ export class AppComponent implements OnDestroy {
   pages = computed(() => Math.max(1, Math.ceil(this.total() / PAGE_SIZE)));
 
   orderId = ''; runEnvironment = 'DEV'; scenario = 'None'; target = 'ERP'; failures = 1;
+  /** The middleware run console starts both integrations: SCN-002 sales orders and SCN-001/003 customer syncs. */
+  runKind = signal<'SalesOrder' | 'CustomerSync'>('SalesOrder');
+  customerId = ''; customerIds = signal<string[]>([]);
   scenarios = ['None','BadRequest','Unauthorized','NotFound','RateLimit','ServerError','Unavailable','Timeout','Validation','Duplicate'];
   statuses = ['Pending','Running','Completed','Failed','Retrying'];
 
@@ -184,14 +187,35 @@ export class AppComponent implements OnDestroy {
   go(target: Focus | View) {
     const f: Focus = typeof target === 'string' ? { view: target } : { ...target };
     this.view.set(f.view); this.focus.set(f);
-    setTimeout(() => document.querySelector('.content')?.scrollIntoView({ block: 'start' }));
+    if (f.run) void this.prepareRun(f.kind === 'customer' ? 'CustomerSync' : 'SalesOrder', f.id);
+    setTimeout(() => (f.run ? document.getElementById('run-console') : document.querySelector('.content'))?.scrollIntoView({ block: 'start' }));
+  }
+  /** Selects what the run console will start, loading the CRM customer list when needed. */
+  async prepareRun(kind: 'SalesOrder' | 'CustomerSync', id?: string) {
+    this.runKind.set(kind);
+    if (kind === 'CustomerSync') {
+      await this.loadCustomerIds();
+      if (id) this.customerId = id;
+      if (!this.customerIds().includes(this.customerId)) this.customerId = this.customerIds()[0] ?? '';
+    } else if (id) this.orderId = id;
+    if (this.scenario === 'Duplicate' && kind === 'CustomerSync') this.scenario = 'None';
+  }
+  private async loadCustomerIds() {
+    const generation = this.generation;
+    try {
+      const customers = await this.request<{ customerId: string }[]>('source/customers');
+      if (generation === this.generation) this.customerIds.set(customers.map(c => c.customerId));
+    } catch (e) { if (generation === this.generation) this.reportError(e); }
   }
   /** Opens an execution's investigation panel from any page. */
   async openExecution(id: string) {
     this.view.set('Executions'); this.focus.set(null);
     await this.inspect(id); void this.refresh();
   }
-  manualRefresh() { this.tick.update(t => t + 1); void this.refresh(); }
+  manualRefresh() {
+    this.tick.update(t => t + 1); void this.refresh();
+    if (this.runKind() === 'CustomerSync') void this.loadCustomerIds();
+  }
   /** Pipeline stage status for the selected execution, from the stages logged in its latest attempt. */
   stageStates(e: Execution): { name: string; state: 'done' | 'failed' | 'pending' }[] {
     const attempt = Math.max(0, ...e.logs.map(l => l.attempt));
@@ -283,8 +307,10 @@ export class AppComponent implements OnDestroy {
     const generation = this.generation;
     this.busy.set(true); this.error.set(''); this.notice.set('');
     try {
+      const customer = this.runKind() === 'CustomerSync';
       const result = await this.request<{ id: string }>('executions', 'POST', {
-        orderId: this.orderId, environment: this.runEnvironment, scenario: this.scenario,
+        kind: this.runKind(), sourceId: customer ? this.customerId : this.orderId,
+        environment: this.runEnvironment, scenario: this.scenario,
         target: this.scenario === 'Validation' ? 'CRM' : this.scenario === 'Duplicate' ? 'ERP' : this.target,
         failuresBeforeSuccess: Number(this.failures)
       });

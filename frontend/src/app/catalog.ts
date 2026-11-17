@@ -25,11 +25,11 @@ export const SCENARIOS: ScenarioDef[] = [
       { text: 'Open the Legacy CRM and select customer C-300.', detail: 'It exists only in the source system.', go: { view: 'Source System', kind: 'customer', id: 'C-300' }, label: 'Open C-300' },
       { text: 'Open the Mapping Studio for C-300 and inspect the five field rules.', go: { view: 'Mapping Studio', kind: 'customer', id: 'C-300' }, label: 'Open mapper' },
       { text: 'Click Preview mapping. The name is trimmed, the email lower-cased and the phone normalized. Nothing is written.' },
-      { text: 'Click Run this integration (or Sync to Modern ERP in the CRM).', detail: 'Operator role required.' },
+      { text: 'Start the integration from the middleware: click Run this integration, or use the run console (SCN-001/003 · Customer sync, C-300).', detail: 'Operator role required. The CRM itself has no integration buttons: the Integration Hub initiates every import.', go: { view: 'Executions', kind: 'customer', id: 'C-300', run: true }, label: 'Run console' },
       { text: 'Follow the execution: Queued → Started → Retrieved → Mapped → Completed (Created).' },
       { text: 'Open the Modern ERP customer master and select C-300.', go: { view: 'Target System', kind: 'customer', id: 'C-300' }, label: 'Open ERP' },
       { text: 'Use Compare with source and check every row is ✓. Its history shows a Created entry linked to the execution.' },
-      { text: 'Optional failure: sync C-400. It fails at Validation because email is required by the ERP.', go: { view: 'Source System', kind: 'customer', id: 'C-400' }, label: 'Open C-400' },
+      { text: 'Optional failure: run the customer sync for C-400. It fails at Validation because the ERP requires an email.', go: { view: 'Executions', kind: 'customer', id: 'C-400', run: true }, label: 'Run C-400' },
     ]
   },
   {
@@ -46,12 +46,12 @@ export const SCENARIOS: ScenarioDef[] = [
     steps: [
       { text: 'Open the Legacy CRM sales orders and select ORD-013 (customer C-300).', go: { view: 'Source System', kind: 'order', id: 'ORD-013' }, label: 'Open ORD-013' },
       { text: 'Open the Mapping Studio and preview the order mapping (410.25 USD → 41025).', go: { view: 'Mapping Studio', kind: 'order', id: 'ORD-013' }, label: 'Open mapper' },
-      { text: 'Run the integration. If C-300 is not yet in the ERP, it fails as MissingCustomer at target delivery, with guidance.' },
-      { text: 'Run SCN-001 for C-300 (Legacy CRM → Sync to Modern ERP).', go: { view: 'Source System', kind: 'customer', id: 'C-300' }, label: 'Open C-300' },
+      { text: 'Run ORD-013 from the run console. If C-300 is not yet in the ERP, it fails as MissingCustomer at target delivery, with guidance.', go: { view: 'Executions', kind: 'order', id: 'ORD-013', run: true }, label: 'Run ORD-013' },
+      { text: 'Run SCN-001 for C-300 from the run console (Customer sync).', go: { view: 'Executions', kind: 'customer', id: 'C-300', run: true }, label: 'Run C-300' },
       { text: 'Back on the failed ORD-013 execution, click Safely retry. The frozen payload is reused and the order completes.', go: { view: 'Executions' }, label: 'Executions' },
       { text: 'Open the Modern ERP imported orders and select ORD-013.', go: { view: 'Target System', kind: 'order', id: 'ORD-013' }, label: 'Open ERP' },
       { text: 'Compare with source: externalOrderId, accountCode, currencyCode and totalMinorUnits all match ✓.' },
-      { text: 'Try ORD-014 (JPY): it fails at Validation and never reaches the ERP.', go: { view: 'Source System', kind: 'order', id: 'ORD-014' }, label: 'Open ORD-014' },
+      { text: 'Try ORD-014 (JPY): it fails at Validation and never reaches the ERP.', go: { view: 'Executions', kind: 'order', id: 'ORD-014', run: true }, label: 'Run ORD-014' },
     ]
   },
   {
@@ -70,9 +70,9 @@ export const SCENARIOS: ScenarioDef[] = [
       { text: 'In the Legacy CRM, edit C-300: change the email and phone. The version increases and a revision is stored.', go: { view: 'Source System', kind: 'customer', id: 'C-300' }, label: 'Edit C-300' },
       { text: 'Compare the original and modified source records in the revision history.' },
       { text: 'Preview the mapped update in the Mapping Studio.', go: { view: 'Mapping Studio', kind: 'customer', id: 'C-300' }, label: 'Open mapper' },
-      { text: 'Click Sync to Modern ERP. The execution completes with "updated … emailAddress, contactNumber".' },
+      { text: 'Run the customer sync for C-300 from the run console. The execution completes with "updated … emailAddress, contactNumber".', go: { view: 'Executions', kind: 'customer', id: 'C-300', run: true }, label: 'Run C-300' },
       { text: 'Open C-300 in the Modern ERP. History shows Updated with before → after values, and the execution ID.', go: { view: 'Target System', kind: 'customer', id: 'C-300' }, label: 'Open ERP' },
-      { text: 'Sync again without editing: the outcome is Unchanged, and no duplicate record is created.' },
+      { text: 'Run the sync again without editing: the outcome is Unchanged, and no duplicate record is created.' },
     ]
   },
   {

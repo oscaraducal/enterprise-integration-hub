@@ -14,7 +14,13 @@ export class ApiError extends Error {
 export type View = 'Overview' | 'Source System' | 'Scenarios' | 'Mapping Studio' | 'Target System' | 'Executions' | 'Workloads' | 'Guides';
 export type RecordKind = 'customer' | 'order';
 /** Cross-page navigation request, e.g. "open customer C-300 in the Mapping Studio". */
-export interface Focus { view: View; kind?: RecordKind; id?: string; scenario?: string }
+export interface Focus {
+  view: View; kind?: RecordKind; id?: string; scenario?: string;
+  /** Screen inside a business application, e.g. 'Sales Orders' in the Legacy CRM. */
+  section?: string;
+  /** Pre-fill the middleware's run console with kind/id instead of opening the record. */
+  run?: boolean;
+}
 export function errorText(e: unknown): string {
   if (e instanceof ApiError && Object.keys(e.fieldErrors).length)
     return Object.entries(e.fieldErrors).map(([f, m]) => `${f}: ${m.join(' ')}`).join(' · ');

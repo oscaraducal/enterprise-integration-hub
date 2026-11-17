@@ -61,7 +61,7 @@ ERP response: `{ "outcome": "Updated", "changedFields": ["emailAddress", "accoun
 ## End-to-end process
 1. Legacy CRM → C-300 → **Edit**. Change the email and the status → *now version 2*. The revision table shows before → after.
 2. Mapping Studio → C-300 → **Preview mapping**: the update payload, with nothing written.
-3. **Sync to Modern ERP**. The execution logs `Mapped… source version 2` and `Completed: updated C-300 from source version 2: emailAddress, accountStatus.`
+3. Run the customer sync for C-300 from the Integration Hub (**Run an integration** console or **Run this integration**). The execution logs `Mapped… source version 2` and `Completed: updated C-300 from source version 2: emailAddress, accountStatus.`
 4. Modern ERP → C-300: the history shows `Updated` with struck-through old values and highlighted new values, plus the execution link.
 5. Sync again without editing: `Completed: … already held identical data … (idempotent)`.
 
