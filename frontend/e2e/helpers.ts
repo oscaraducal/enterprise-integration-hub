@@ -1,13 +1,13 @@
 import { expect, Page } from '@playwright/test';
 // Shared navigation for the three application workspaces (Legacy CRM, Integration Workbench, Modern ERP).
 
-/** Signs in; the console opens on the Integration Workbench overview. */
+/** Signs in; the console opens on the Integration Workbench home (resource cards). */
 export async function login(page: Page, user = 'operator') {
   await page.goto('/');
   await page.getByLabel('Demo account').selectOption(user);
   await page.getByLabel('Password', { exact: true }).fill(process.env['DEMO_PASSWORD']!);
   await page.getByRole('button', { name: 'Sign in to console' }).click();
-  await expect(page.getByRole('heading', { name: 'Workbench overview', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Integration Workbench', level: 1 })).toBeVisible();
 }
 /** Signs in and opens Monitoring (execution metrics, run console and history). */
 export async function loginToMonitoring(page: Page, user = 'operator') {
@@ -20,7 +20,9 @@ export async function loginToMonitoring(page: Page, user = 'operator') {
 const PAGES: Record<string, [workspace: string, item: string | null]> = {
   'Source System': ['Legacy CRM', null],
   'Target System': ['Modern ERP', null],
-  'Overview': ['Integration Workbench', 'Overview'],
+  'Overview': ['Integration Workbench', 'Home'],
+  'Home': ['Integration Workbench', 'Home'],
+  'Projects': ['Integration Workbench', 'Projects'],
   'Integrations': ['Integration Workbench', 'Integrations'],
   'Integration Designer': ['Integration Workbench', 'Integrations'],
   'Connections': ['Integration Workbench', 'Connections'],
@@ -36,6 +38,7 @@ export const switchWorkspace = (page: Page, name: string) =>
 /** Opens the drawer on phones, where the workspace sidebar is hidden behind the menu button. */
 async function sidebar(page: Page, label: string) {
   const nav = page.getByRole('navigation', { name: label });
+  await nav.waitFor({ state: 'attached' });                       // the workspace has rendered (and its menu button, on phones)
   const toggle = page.getByRole('button', { name: 'Toggle workspace navigation' });
   if (await toggle.isVisible() && (await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
   return nav;

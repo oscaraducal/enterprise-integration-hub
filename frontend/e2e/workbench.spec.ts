@@ -124,7 +124,8 @@ test('A new Application integration starts blank; configure the trigger and add 
   await iw.getByRole('radio', { name: /^GET/ }).click();
   await wizardNext(page, 'Invoke endpoint wizard');
   await iw.getByRole('radio', { name: 'GET /customers/{customerId}' }).click();
-  await wizardNext(page, 'Invoke endpoint wizard', 3);
+  await expect(iw.getByRole('list', { name: 'Wizard steps' })).not.toContainText('Request'); // GET has no request body step
+  await wizardNext(page, 'Invoke endpoint wizard', 2);
   await iw.getByLabel('Path parameter {customerId}', { exact: true }).fill('$trigger.customerId');
   await wizardNext(page, 'Invoke endpoint wizard');
   await expect(iw).toContainText('No request mapping needed.');
@@ -157,7 +158,7 @@ test('A new Application integration starts blank; configure the trigger and add 
   await page.getByRole('dialog', { name: 'Invoke endpoint wizard' }).getByRole('radio', { name: /^GET/ }).click();
   await wizardNext(page, 'Invoke endpoint wizard');
   await page.getByRole('dialog', { name: 'Invoke endpoint wizard' }).getByRole('radio', { name: 'GET /customer_master/{accountCode}' }).click();
-  await wizardNext(page, 'Invoke endpoint wizard', 4);
+  await wizardNext(page, 'Invoke endpoint wizard', 3);
   await page.getByRole('dialog', { name: 'Invoke endpoint wizard' }).getByRole('button', { name: 'Finish' }).click();
   const impact = page.getByRole('dialog', { name: 'Mapping impact' });
   await expect(impact).toContainText('sends no request body');

@@ -29,6 +29,12 @@ async function openIntegration(page: Page, title: string) {
 const boxes = (page: Page) => page.locator('.canvas .node-head').evaluateAll(els => els.map(e => { const r = e.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; }));
 const canvasSize = (page: Page) => page.locator('.canvas').evaluate(e => [e.scrollWidth, e.scrollHeight]);
 async function box(l: Locator) { const b = await l.boundingBox(); expect(b).not.toBeNull(); return b!; }
+/** The popup is positioned right after it renders; wait until its box is placed and stable before measuring. */
+async function settled(l: Locator) {
+  let last = '';
+  await expect.poll(async () => { const b = await l.boundingBox(); const k = b ? [b.x, b.y, b.width, b.height].map(Math.round).join(',') : ''; const same = !!b && k === last && (b.x > 0 || b.y > 0); last = k; return same; }).toBe(true);
+  return box(l);
+}
 
 test.describe.configure({ mode: 'serial' });
 
@@ -39,7 +45,10 @@ test('Three workspaces: switcher, dedicated navigation, meaningful URLs and back
   const switcher = page.getByRole('navigation', { name: 'Workspaces' });
   await expect(switcher.getByRole('button', { name: 'Integration Workbench' })).toHaveAttribute('aria-current', 'page');
   const wb = page.getByRole('navigation', { name: 'Integration Workbench navigation' });
-  for (const item of ['Overview', 'Integrations', 'Connections', 'Mappings', 'Monitoring', 'Guides']) await expect(wb.getByRole('button', { name: item, exact: true })).toBeVisible();
+  for (const item of ['Home', 'Projects', 'Integrations', 'Connections', 'Mappings', 'Monitoring', 'Guides']) await expect(wb.getByRole('button', { name: item, exact: true })).toBeVisible();
+  // No permanent sidebar in the Integration Workbench: resources are cards and a compact top bar.
+  await expect(page.locator('aside.sidebar')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Toggle workspace navigation' })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/readme-workbench-overview.png' });
 
   // Legacy CRM shows only source-system screens: no integration authoring.
@@ -47,6 +56,7 @@ test('Three workspaces: switcher, dedicated navigation, meaningful URLs and back
   await expect(page).toHaveURL(/\/crm$/);
   await expect(switcher.getByRole('button', { name: 'Legacy CRM' })).toHaveAttribute('aria-current', 'page');
   await expect(wb).toHaveCount(0);
+  await expect(page.locator('aside.sidebar')).toHaveCount(1); // business applications keep their own navigation
   await expect(page.getByRole('complementary', { name: 'Action palette' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '+ Create connection' })).toHaveCount(0);
   await appNav(page, 'Legacy CRM', 'Customers');
@@ -77,17 +87,46 @@ test('Three workspaces: switcher, dedicated navigation, meaningful URLs and back
   await expect(wb.getByRole('button', { name: 'Monitoring' })).toHaveAttribute('aria-current', 'page');
 });
 
-test('Workbench overview: integration-focused summary and actions, no invented runtime data', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
+test('Workbench home: resource cards, planned resources, project workspace and quick actions', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
   await login(page);
-  const summary = page.getByRole('region', { name: 'Integration development summary' });
-  await expect(summary).toContainText('Integrations');
-  await expect(summary).toContainText('Connections');
+  const cards = page.getByRole('region', { name: 'Workbench resources' });
+  for (const name of ['Projects', 'Integrations', 'Connections', 'Mappings', 'Monitoring', 'Guides']) await expect(cards.getByRole('button', { name: 'Open ' + name, exact: true })).toBeVisible();
+  // Planned resources are labelled and are not buttons.
+  for (const name of ['Lookups', 'Libraries']) {
+    await expect(cards.getByRole('article', { name: name + ' (planned)' })).toContainText('Planned');
+    await expect(cards.getByRole('button', { name: 'Open ' + name })).toHaveCount(0);
+  }
+  await expect(cards.getByRole('button', { name: 'Open Integrations', exact: true })).toContainText(/\d+ integrations?/);
+  // On a wide monitor the cards use the space: at least four per row.
+  const boxes = await cards.locator('.resource-card').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top)));
+  expect(boxes.filter(t => t === boxes[0]).length).toBeGreaterThanOrEqual(4);
+  await page.screenshot({ path: 'test-results/readme-workbench-home.png' });
+
+  // Projects → the practice project groups every integration and connection; Lookups and Libraries are planned.
+  await cards.getByRole('button', { name: 'Open Projects', exact: true }).click();
+  await expect(page).toHaveURL(/\/workbench\/projects$/);
+  await page.getByRole('button', { name: 'Open project Practice Project' }).click();
+  await expect(page).toHaveURL(/\/workbench\/projects\/practice$/);
+  const integrations = page.getByRole('region', { name: /^Integrations/ });
+  await expect(integrations).toContainText('Account Sync');
+  await expect(page.getByRole('region', { name: /^Connections/ })).toContainText('LEGACY_CRM_REST');
+  for (const name of ['Lookups', 'Libraries']) await expect(page.getByRole('region', { name: new RegExp('^' + name) })).toContainText('Planned');
+  await page.screenshot({ path: 'test-results/readme-workbench-project.png' });
+  await page.getByRole('tab', { name: 'Observe' }).click();
+  await expect(page.getByRole('region', { name: 'Observe' })).toContainText('design-time only');
+  await page.getByRole('tab', { name: 'Design' }).click();
+  // Opening from the project returns to the project.
+  await integrations.getByRole('button', { name: 'Open Account Sync from the project' }).click();
+  await expect(page).toHaveURL(/\/workbench\/integrations\/account-sync\?from=project$/);
+  await page.getByRole('button', { name: 'Back to project' }).click();
+  await expect(page).toHaveURL(/\/workbench\/projects\/practice$/);
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Projects');
+  await nav(page, 'Home');
   await expect(page.getByRole('region', { name: 'Recent integration designs' })).toContainText('Account Sync');
   await expect(page.getByRole('region', { name: 'Connection health' })).toContainText('LEGACY_CRM_REST');
   await expect(page.getByRole('region', { name: 'Validation problems' })).toContainText('Account Sync');
   await expect(page.getByRole('region', { name: 'Recent executions' })).toContainText('not executed until Milestone D');
-  await expect(page.getByRole('region', { name: 'What works in this release' })).toContainText('Planned');
   // Quick actions open the right page and wizard.
   await page.getByRole('region', { name: 'Quick actions' }).getByRole('button', { name: /Create connection/ }).click();
   await expect(page).toHaveURL(/\/workbench\/connections\?new=1$/);
@@ -154,7 +193,7 @@ test('Add action popup floats over the canvas without moving nodes, in nested la
   await expect(page.locator('.canvas .picker')).toHaveCount(0);
   expect(await boxes(page)).toEqual(before);
   expect(await canvasSize(page)).toEqual(size);
-  const p = await box(picker(page)), a = await box(plus);
+  const p = await settled(picker(page)), a = await box(plus);
   expect(p.width).toBeGreaterThanOrEqual(320); expect(p.width).toBeLessThanOrEqual(380);
   expect(p.x).toBeGreaterThanOrEqual(a.x + a.width - 1);          // to the right of the +
   expect(p.x + p.width).toBeLessThanOrEqual(1600); expect(p.y + p.height).toBeLessThanOrEqual(1000);
@@ -206,11 +245,13 @@ test('Add action popup floats over the canvas without moving nodes, in nested la
   await page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: 'Horizontal' }).click();
   await page.getByRole('button', { name: 'Zoom out' }).click();
   const hPlus = slot(page, 'main flow, position 2');
-  await hPlus.scrollIntoViewIfNeeded();                          // clicking would otherwise scroll the canvas itself
+  // Put the + near the top of the viewport (room below it); clicking would otherwise scroll the canvas itself.
+  await page.getByRole('region', { name: 'Flow canvas' }).evaluate(e => e.scrollTo(0, 0));
+  await hPlus.evaluate(e => e.scrollIntoView({ block: 'nearest', inline: 'center' }));
   await page.waitForTimeout(300);                                // let the zoom transition settle before measuring
   const hBefore = await boxes(page);
   await hPlus.click();
-  const hp = await box(picker(page)), ha = await box(hPlus);
+  const hp = await settled(picker(page)), ha = await box(hPlus);
   expect(hp.y).toBeGreaterThanOrEqual(ha.y + ha.height - 1);
   expect(Math.abs((hp.x + hp.width / 2) - (ha.x + ha.width / 2))).toBeLessThan(hp.width / 2 + 1);
   expect(await boxes(page)).toEqual(hBefore);
@@ -282,7 +323,7 @@ test('Phones: workspace switcher, navigation drawer, Integrations and a bottom-s
   await openIntegration(page, COPY);
   expect(await noOverflow(page)).toBe(true);
   await slot(page, 'main flow, position 1').click();
-  const sheet = await box(picker(page));
+  const sheet = await settled(picker(page));
   expect(Math.round(sheet.y + sheet.height)).toBeGreaterThanOrEqual(843);
   expect(sheet.width).toBeGreaterThanOrEqual(388);
   await page.screenshot({ path: 'test-results/readme-mobile-popup.png' });
