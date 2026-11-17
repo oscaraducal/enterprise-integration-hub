@@ -200,7 +200,7 @@ Designs are configuration: no route below executes a flow or calls a target syst
 | GET | /api/flows/actions | Viewer/Operator | Action catalog with status (Designable or Planned), expression functions, date formats, templates and limits |
 | POST | /api/flows/expressions/check | Viewer/Operator | `{ expression }` → `{ valid, errors[{position,message}], variables }`. Parsed, never evaluated |
 | POST | /api/flows/validate | Viewer/Operator | `{ definition }` → `{ valid, issues[{nodeId,severity,message,field}], nodeCount, variables }` |
-| GET | /api/flows | Viewer/Operator | Flows with draft revision and latest published version |
+| GET | /api/flows | Viewer/Operator | Flows with draft revision, latest published version and date, and the draft's validation status (`valid`, `errors`, `warnings`, `actions`) for the Integrations page |
 | GET | /api/flows/{name} | Viewer/Operator | Draft definition, revision, versions and a fresh validation report |
 | GET | /api/flows/{name}/versions/{version} | Viewer/Operator | An immutable published version |
 | POST | /api/flows | Operator | `{ name, title, description?, template? }` (`blank`, `customer-sync`, `order-xml`, `order-review`). Names: `^[a-z][a-z0-9-]{2,59}$`; 409 if taken |
@@ -208,6 +208,7 @@ Designs are configuration: no route below executes a flow or calls a target syst
 | POST | /api/flows/{name}/publish | Operator | `{ revision }`. Only a valid saved draft becomes version n+1 (400 with report otherwise, 503 if a catalog was unreachable) |
 | GET | /api/flows/{name}/export?version= | Viewer/Operator | `eih-flow` document of the draft or a version |
 | POST | /api/flows/import | Operator | `{ document, name? }`. Always creates a new draft; 409 if the name exists |
+| POST | /api/flows/{name}/duplicate | Operator | `{ identifier, title? }` (Milestone C.2). Copies the **saved** draft into a new unpublished integration named after the identifier (`ACCOUNT_SYNC_COPY` → `account-sync-copy`). The original and its versions are unchanged; 409 if the name exists, 404 for an unknown source |
 
 Limits: 150 actions, 6 nesting levels, 256 KB per definition, 500-character expressions. See [docs/designer](docs/designer/README.md).
 

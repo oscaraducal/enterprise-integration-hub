@@ -225,6 +225,26 @@ public class ConnectionManagerApiTests
         Assert.Equal(HttpStatusCode.OK, (await op.PutAsJsonAsync("/api/connections/HUB_TRIGGER", new { name = "Hub REST trigger (renamed)", revision = 1 })).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await op.DeleteAsync("/api/connections/LEGACY_CRM_REST")).StatusCode);
 
+        // The Integrations list reports each draft's validation and publishing status.
+        var list = await viewer.GetFromJsonAsync<JsonElement>("/api/flows");
+        var listed = list.EnumerateArray().Single(f => f.GetProperty("name").GetString() == "customer-sync");
+        Assert.False(listed.GetProperty("valid").GetBoolean());
+        Assert.True(listed.GetProperty("errors").GetInt32() > 0);
+        Assert.Equal((0, "Draft only"), (listed.GetProperty("latestVersion").GetInt32(), listed.GetProperty("status").GetString()));
+        Assert.Equal("CUSTOMER_SYNC", listed.GetProperty("identifier").GetString());
+
+        // Duplicate copies the saved draft into a new unpublished integration; the original is untouched. Operators only.
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsJsonAsync("/api/flows/customer-sync/duplicate", new { identifier = "CUSTOMER_SYNC_COPY" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await op.PostAsJsonAsync("/api/flows/customer-sync/duplicate", new { identifier = "bad id" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await op.PostAsJsonAsync("/api/flows/missing-flow/duplicate", new { identifier = "MISSING_COPY" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await op.PostAsJsonAsync("/api/flows/customer-sync/duplicate", new { identifier = "CUSTOMER_SYNC_COPY", title = "Customer sync copy" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await op.PostAsJsonAsync("/api/flows/customer-sync/duplicate", new { identifier = "CUSTOMER_SYNC_COPY" })).StatusCode);
+        var copy = await viewer.GetFromJsonAsync<JsonElement>("/api/flows/customer-sync-copy");
+        Assert.Equal(("application", "CUSTOMER_SYNC_COPY", "Customer sync copy", 0), (copy.GetProperty("style").GetString(), copy.GetProperty("identifier").GetString(),
+            copy.GetProperty("title").GetString(), copy.GetProperty("versions").GetArrayLength()));
+        Assert.Equal("HUB_TRIGGER", copy.GetProperty("definition").GetProperty("trigger").GetProperty("config").GetProperty("connection").GetString());
+        Assert.Equal(2, (await viewer.GetFromJsonAsync<JsonElement>("/api/flows/customer-sync")).GetProperty("revision").GetInt32());
+
         // Designing and testing never executed anything or wrote to the ERP.
         Assert.All(recording.Calls, c => Assert.Matches(@"^(CRM|ERP) GET /(health|api/catalog/tables)$", c));
         using var scope = hub.Services.CreateScope();

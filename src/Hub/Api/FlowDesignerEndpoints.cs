@@ -57,15 +57,41 @@ public static partial class FlowDesignerEndpoints
             return Results.Ok(await Check(request.Definition, db, f, ct));
         }).RequireRateLimiting("mutations");
 
-        flows.MapGet("", async (HubDb db) =>
+        flows.MapGet("", async (HubDb db, IHttpClientFactory f, CancellationToken ct) =>
         {
-            var designs = await db.FlowDesigns.AsNoTracking().OrderBy(d => d.Name).ToListAsync();
-            var latest = await db.FlowVersions.AsNoTracking().GroupBy(v => v.FlowName)
-                .Select(g => new { Name = g.Key, Version = g.Max(v => v.Version) }).ToDictionaryAsync(x => x.Name, x => x.Version);
-            return designs.Select(d => new { d.Name, d.Title, d.Description, d.DraftRevision, d.DraftUpdatedAt, d.DraftUpdatedBy,
-                style = d.Style ?? "manual", identifier = d.Identifier ?? d.Name.ToUpperInvariant().Replace('-', '_'), versionLabel = d.VersionLabel ?? "01.00.0000", tags = Tags(d.Tags),
-                latestVersion = latest.GetValueOrDefault(d.Name), status = latest.ContainsKey(d.Name) ? "Published · draft editable" : "Draft only" });
+            var designs = await db.FlowDesigns.AsNoTracking().OrderBy(d => d.Name).ToListAsync(ct);
+            var latest = (await db.FlowVersions.AsNoTracking().Select(v => new { v.FlowName, v.Version, v.PublishedAt }).ToListAsync(ct))
+                .GroupBy(v => v.FlowName).ToDictionary(g => g.Key, g => g.MaxBy(v => v.Version)!);
+            // One catalog snapshot and connection resolver validate every draft, so the list shows each integration's validation status.
+            var snapshot = await CatalogSnapshot.LoadAsync(f, ct);
+            var resolver = await ConnectionEndpoints.Resolver(db, ct);
+            return designs.Select(d =>
+            {
+                FlowReport? report = null;
+                try { report = FlowValidator.Validate(JsonSerializer.Deserialize<FlowDefinition>(d.DraftJson, Json), snapshot.Resolve, resolver); }
+                catch (JsonException) { /* reported as not validated */ }
+                var published = latest.GetValueOrDefault(d.Name);
+                return new { d.Name, d.Title, d.Description, d.DraftRevision, d.DraftUpdatedAt, d.DraftUpdatedBy,
+                    style = d.Style ?? "manual", identifier = d.Identifier ?? d.Name.ToUpperInvariant().Replace('-', '_'), versionLabel = d.VersionLabel ?? "01.00.0000", tags = Tags(d.Tags),
+                    latestVersion = published?.Version ?? 0, latestPublishedAt = published?.PublishedAt, status = published is not null ? "Published · draft editable" : "Draft only",
+                    valid = report?.Valid ?? false, errors = report?.Issues.Count(i => i.Severity == "error") ?? 1, warnings = report?.Issues.Count(i => i.Severity == "warning") ?? 0,
+                    actions = report?.NodeCount ?? 0 };
+            });
         });
+        flows.MapPost("/{name}/duplicate", async (string name, DuplicateFlow input, ClaimsPrincipal user, HubDb db, CancellationToken ct) =>
+        {
+            // Copies the saved draft into a new, unpublished integration. The original draft and its published versions are untouched.
+            var source = await db.FlowDesigns.AsNoTracking().SingleOrDefaultAsync(x => x.Name == name, ct);
+            if (source is null) return Results.NotFound();
+            if (!IdentifierPattern().IsMatch(input.Identifier ?? "")) return Invalid("identifier", "Use 2-50 upper-case letters, digits or '_', starting with a letter (e.g. CUSTOMER_SYNC_COPY).");
+            var newName = Slug(input.Identifier!);
+            if (!FlowName().IsMatch(newName)) return Invalid("identifier", "The identifier must produce a valid name of 3-60 characters.");
+            var title = string.IsNullOrWhiteSpace(input.Title) ? source.Title + " (copy)" : input.Title.Trim();
+            if (title.Length > 80) return Invalid("title", "Name is required (max 80 characters).");
+            var definition = JsonSerializer.Deserialize<FlowDefinition>(source.DraftJson, Json)!;
+            return await Create(db, newName, title, source.Description, definition, User(user), ct,
+                meta: new(source.Style ?? "manual", input.Identifier!, source.VersionLabel ?? "01.00.0000", Tags(source.Tags)));
+        }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
         flows.MapGet("/{name}", async (string name, HubDb db, IHttpClientFactory f, CancellationToken ct) =>
         {
             var d = await db.FlowDesigns.AsNoTracking().SingleOrDefaultAsync(x => x.Name == name, ct);
@@ -187,6 +213,7 @@ public static partial class FlowDesignerEndpoints
         }).RequireAuthorization("Operate").RequireRateLimiting("mutations");
     }
 
+    public sealed record DuplicateFlow(string? Identifier, string? Title);
     public sealed record FlowMeta(string Style, string Identifier, string VersionLabel, string[] Tags);
     private static string[] Tags(string? csv) => string.IsNullOrEmpty(csv) ? [] : csv.Split(',', StringSplitOptions.RemoveEmptyEntries);
     private static async Task<IResult> Create(HubDb db, string name, string title, string? description, FlowDefinition definition, string user, CancellationToken ct,
