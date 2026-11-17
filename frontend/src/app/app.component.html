@@ -63,7 +63,7 @@
               <form (ngSubmit)="run()" class="run-form">
                 <label>Source order<select name="order" [(ngModel)]="orderId" required>@for(order of orders(); track order.id){ <option [value]="order.id">{{order.id}} · {{order.currency}} {{order.amount}}</option> }</select></label>
                 <label>Environment<select name="runEnv" [(ngModel)]="runEnvironment"><option>DEV</option><option>TEST</option></select></label>
-                <label>Scenario<select name="scenario" [(ngModel)]="scenario">@for(s of scenarios; track s){<option>{{s}}</option>}</select></label>
+                <label>Scenario<select aria-label="Scenario" name="scenario" [(ngModel)]="scenario">@for(s of scenarios; track s){<option>{{s}}</option>}</select></label>
                 <label>Target<select name="target" [(ngModel)]="target" [disabled]="scenario === 'Validation' || scenario === 'Duplicate'"><option>ERP</option><option>CRM</option></select></label>
                 <label>Fail first attempts<select name="failures" [(ngModel)]="failures"><option [ngValue]="1">1 · recover</option><option [ngValue]="2">2 · recover</option><option [ngValue]="3">3 · exhaust</option></select></label>
                 <button mat-flat-button type="submit" [disabled]="busy() || !orderId">Run integration →</button>

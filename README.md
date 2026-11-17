@@ -60,7 +60,7 @@ In a second terminal:
 
 ```sh
 cd frontend
-npm install
+npm ci
 npm start
 ```
 
@@ -80,7 +80,7 @@ The dashboard proxies `/api` to the middleware; service keys are never sent to t
 ```sh
 dotnet test EnterpriseIntegrationHub.slnx -c Release
 cd frontend
-npm install
+npm ci
 npm run build
 npx playwright install chromium
 ```
@@ -122,4 +122,4 @@ SQLite uses `EnsureCreated` for a fresh demo schema; versioned migrations, multi
 
 Only USD, PHP and EUR are supported, each with two decimal places. Job simulation writes completed history records immediately; it does not schedule or execute real workloads. The MVP has bounded list pages but aggregates metrics in-process and is intended for modest demo volumes.
 
-Dependency versions are explicit. Commit the resolved npm lockfile from a successful install before a reproducible release; the workflow currently uses `npm install` and archives that lockfile for review.
+Dependency versions and the resolved npm lockfile are committed. Local, CI and container builds use `npm ci` for reproducible dependency installation.

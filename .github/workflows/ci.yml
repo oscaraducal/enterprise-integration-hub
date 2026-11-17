@@ -26,10 +26,7 @@ jobs:
         run: dotnet test EnterpriseIntegrationHub.slnx -c Release --no-build --logger trx --results-directory TestResults
       - name: Install dashboard dependencies
         working-directory: frontend
-        run: npm install --no-audit --no-fund
-      - name: Export resolved dependency lock
-        working-directory: frontend
-        run: node ../scripts/ci-metadata.mjs
+        run: npm ci --no-audit --no-fund
       - name: Angular production build
         working-directory: frontend
         run: npm run build

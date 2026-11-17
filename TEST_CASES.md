@@ -20,7 +20,7 @@ Tests are grouped by behavior rather than copied from implementation details. **
 | Authentication | Anonymous, wrong password and expired JWT rejected |
 | Authorization | Viewer reads metrics but cannot submit/retry or simulate jobs |
 | Monitoring | Durable submission, ID filtering, metrics, queued timeline |
-| Idempotency | Second submission returns 409; retry state transition is conditional |
+| Idempotency | Concurrent submissions create one execution; concurrent ERP deliveries return one receipt; retry state transition is conditional |
 | ERP | Same payload returns same receipt; changed payload conflicts; invalid amount rejected |
 | CRM | Seeded fictional data, unknown-customer validation, 503 simulation |
 | Workload | DEV/TEST filtering and synthetic failed-job details |
