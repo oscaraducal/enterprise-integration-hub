@@ -1,11 +1,11 @@
 @if (!signedIn()) {
   <main class="login-page">
     <section class="login-story">
-      <div class="brand"><span class="brand-mark">↗</span> Integration Hub</div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span> Integration Hub</div>
       <span class="eyebrow">ENGINEERING PORTFOLIO / 01</span>
       <h1>Every execution.<br>One clear view.</h1>
       <p>Trace an order from source to destination. Investigate failures. Recover with confidence.</p>
-      <div class="flow-preview"><span>CRM<br><small>Source</small></span><b>→</b><span>Integration Hub<br><small>Transform · Observe · Retry</small></span><b>→</b><span>ERP<br><small>Destination</small></span></div>
+      <div class="flow-preview"><span>CRM<br><small>Source</small></span><b aria-hidden="true">→</b><span>Integration Hub<br><small>Transform · Observe · Retry</small></span><b aria-hidden="true">→</b><span>ERP<br><small>Destination</small></span></div>
       <div class="demo-note">SYNTHETIC DATA ONLY · LOCAL DEMONSTRATION</div>
     </section>
     <section class="login-form panel">
@@ -24,11 +24,11 @@
 } @else {
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">↗</span><span>Integration<br><strong>Hub</strong></span></div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span><span>Integration<br><strong>Hub</strong></span></div>
       <div class="workspace-label">DEMO WORKSPACE</div>
       <nav aria-label="Main navigation">
         @for(item of ['Overview','Executions','Workloads']; track item){
-          <button [attr.aria-label]="item" [class.active]="view() === item" (click)="view.set(item)"><span>{{item === 'Overview' ? '◫' : item === 'Executions' ? '⇄' : '▤'}}</span>{{item}}</button>
+          <button type="button" [attr.aria-label]="item" [attr.aria-current]="view() === item ? 'page' : null" [class.active]="view() === item" (click)="view.set(item)"><span aria-hidden="true">{{item === 'Overview' ? '◫' : item === 'Executions' ? '⇄' : '▤'}}</span>{{item}}</button>
         }
       </nav>
       <div class="sidebar-bottom"><span class="live-dot"></span> Local simulator<p>CRM → Middleware → ERP</p><small>Fictional systems. Real engineering.</small></div>
@@ -36,11 +36,20 @@
     <div class="workspace">
       <header class="topbar"><span>Workspace <b>/ {{view()}}</b></span><div><span class="demo-tag">DEMO</span><span class="role">{{role()}}</span><button mat-button (click)="toggleTheme()" aria-label="Toggle theme">{{dark() ? 'Light' : 'Dark'}} theme</button><button mat-button (click)="logout()">Sign out</button></div></header>
       <main class="content">
-        <div class="page-heading"><div><span class="eyebrow">INTEGRATION OPERATIONS</span><h1>{{view() === 'Overview' ? 'Operations overview' : view() === 'Executions' ? 'Execution explorer' : 'Workload monitor'}}</h1><p class="muted">{{view() === 'Workloads' ? 'Fictional DEV and TEST job history. No external scheduler connection.' : 'Monitor the flow. Find the failure. Keep orders moving.'}}</p></div><button mat-stroked-button (click)="refresh()" [disabled]="refreshing()">↻ Refresh</button></div>
-        @if(error()){ <div class="alert error" role="alert">{{error()}} <button (click)="error.set('')" aria-label="Dismiss error">×</button></div> }
-        @if(notice()){ <div class="alert success" role="status">{{notice()}} <button (click)="notice.set('')" aria-label="Dismiss notification">×</button></div> }
+        <div class="page-heading"><div><span class="eyebrow">INTEGRATION OPERATIONS</span><h1>{{view() === 'Overview' ? 'Operations overview' : view() === 'Executions' ? 'Execution explorer' : 'Workload monitor'}}</h1><p class="muted">{{view() === 'Workloads' ? 'Fictional DEV and TEST job history. No external scheduler connection.' : 'Monitor the flow. Find the failure. Keep orders moving.'}}</p></div>
+          <button mat-stroked-button class="refresh-button" (click)="refresh()" [disabled]="refreshing()" [attr.aria-busy]="refreshing()"><span aria-hidden="true">↻</span>&nbsp;Refresh</button></div>
+        @if(error()){ <div class="alert error" role="alert">{{error()}} <button type="button" (click)="error.set('')" aria-label="Dismiss error">×</button></div> }
+        @if(notice()){ <div class="alert success" role="status">{{notice()}} <button type="button" (click)="notice.set('')" aria-label="Dismiss notification">×</button></div> }
+        @if(degraded().length){
+          <div class="alert warning" role="status" aria-label="Partial outage">
+            <b>Some data could not be refreshed.</b> Everything else on this page is still updating.
+            <ul>@for(d of degraded(); track d.section){
+              <li><span class="degraded-label">{{d.label}}:</span> {{d.error}} {{d.updatedAt ? 'Showing data from ' + (d.updatedAt | date:'HH:mm:ss') + '.' : 'No data loaded yet.'}}</li>
+            }</ul>
+          </div>
+        }
         @if(view() !== 'Workloads'){
-          <section class="metrics" aria-label="Execution metrics">
+          <section class="metrics" aria-label="Execution metrics" [class.stale]="section('metrics').error">
             <article class="metric panel"><span>Total executions</span><strong>{{metrics().total}}</strong><small>All environments</small></article>
             <article class="metric panel"><span>Successful</span><strong class="text-green">{{metrics().completed}}</strong><small>Confirmed by mock ERP</small></article>
             <article class="metric panel"><span>Failed</span><strong class="text-red">{{metrics().failed}}</strong><small>Ready for investigation</small></article>
@@ -50,18 +59,21 @@
           @if(view() === 'Overview'){
             <section class="overview-grid">
               <article class="panel distribution"><div class="section-heading"><h2>Execution health</h2><span class="muted">All time</span></div>
-                <div class="stacked-bar" aria-label="Execution status distribution">
+                <div class="stacked-bar" role="img" [attr.aria-label]="distributionLabel()">
                   @for(s of statuses; track s){ <div [class]="s" [style.width.%]="percent(s)" [attr.title]="s + ': ' + count(s)"></div> }
                 </div>
                 <div class="legend">@for(s of statuses; track s){ <div><i [class]="s"></i><span>{{s}}</span><b>{{count(s)}}</b></div> }</div>
               </article>
-              <article class="panel route-card"><div class="section-heading"><h2>Order synchronization</h2><span class="pill Completed">REST / JSON</span></div><div class="route"><div><span>01</span><b>Mock CRM</b><small>Retrieve order</small></div><i>→</i><div><span>02</span><b>Middleware</b><small>Validate & transform</small></div><i>→</i><div><span>03</span><b>Mock ERP</b><small>Accept once</small></div></div><p class="hint">Durable execution history · Bounded backoff · Idempotent delivery</p></article>
+              <article class="panel route-card"><div class="section-heading"><h2>Order synchronization</h2><span class="pill Completed">REST / JSON</span></div><div class="route"><div><span>01</span><b>Mock CRM</b><small>Retrieve order</small></div><i aria-hidden="true">→</i><div><span>02</span><b>Middleware</b><small>Validate & transform</small></div><i aria-hidden="true">→</i><div><span>03</span><b>Mock ERP</b><small>Accept once</small></div></div><p class="hint">Durable execution history · Bounded backoff · Idempotent delivery</p></article>
             </section>
           }
           @if(role() === 'Operator'){
-            <section class="panel launch"><div class="section-heading"><div><h2>Run an integration</h2><p class="hint">Choose a source order and an optional failure scenario.</p></div><span class="demo-tag">SANDBOX</span></div>
+            <section class="panel launch" aria-label="Run an integration"><div class="section-heading"><div><h2>Run an integration</h2><p class="hint">Choose a source order and an optional failure scenario.</p></div><span class="demo-tag">SANDBOX</span></div>
+              @if(section('orders').error){
+                <p class="inline-warning" role="status">Mock CRM is unavailable, so the source order list {{orders().length ? 'may be out of date' : 'could not be loaded'}}. Execution history and investigation still work.</p>
+              }
               <form (ngSubmit)="run()" class="run-form">
-                <label>Source order<select name="order" [(ngModel)]="orderId" required>@for(order of orders(); track order.id){ <option [value]="order.id">{{order.id}} · {{order.currency}} {{order.amount}}</option> }</select></label>
+                <label>Source order<select name="order" [(ngModel)]="orderId" required>@for(order of orders(); track order.id){ <option [value]="order.id">{{order.id}} · {{order.currency}} {{order.amount}}</option> } @empty { <option value="">No source orders available</option> }</select></label>
                 <label>Environment<select name="runEnv" [(ngModel)]="runEnvironment"><option>DEV</option><option>TEST</option></select></label>
                 <label>Scenario<select aria-label="Scenario" name="scenario" [(ngModel)]="scenario">@for(s of scenarios; track s){<option>{{s}}</option>}</select></label>
                 <label>Target<select name="target" [(ngModel)]="target" [disabled]="scenario === 'Validation' || scenario === 'Duplicate'"><option>ERP</option><option>CRM</option></select></label>
@@ -70,31 +82,36 @@
               </form><p class="hint">Validation runs against CRM; Duplicate runs against ERP. Each source order is tracked once.</p>
             </section>
           }
-          <section class="panel execution-panel"><div class="section-heading"><h2>{{view() === 'Overview' ? 'Recent executions' : 'Execution history'}}</h2><span class="muted">{{total()}} results</span></div>
-            <form class="filters" (ngSubmit)="filter()"><label class="search-field"><span class="sr-only">Search execution ID</span><input name="search" maxlength="64" [(ngModel)]="search" placeholder="Search by execution ID…"></label>
-              <label><span class="sr-only">Status filter</span><select name="status" [(ngModel)]="status" (change)="filter()"><option value="">All statuses</option>@for(s of statuses; track s){<option>{{s}}</option>}</select></label>
-              <label><span class="sr-only">Environment filter</span><select name="environment" [(ngModel)]="environment" (change)="filter()"><option value="">All environments</option><option>DEV</option><option>TEST</option></select></label><button mat-stroked-button type="submit">Search</button>
+          <section class="panel execution-panel" aria-labelledby="history-heading"><div class="section-heading"><h2 id="history-heading">{{view() === 'Overview' ? 'Recent executions' : 'Execution history'}}</h2><span class="muted" aria-live="polite">{{total()}} results{{filtersActive() ? ' · filtered' : ''}}</span></div>
+            <form class="filters" (ngSubmit)="filter()" role="search" aria-label="Filter executions"><label class="search-field"><span class="sr-only">Search execution ID</span><input name="search" maxlength="64" [(ngModel)]="search" placeholder="Search by execution ID…"></label>
+              <label><span class="sr-only">Status filter</span><select name="status" [ngModel]="status" (ngModelChange)="status = $event; filter()"><option value="">All statuses</option>@for(s of statuses; track s){<option>{{s}}</option>}</select></label>
+              <label><span class="sr-only">Environment filter</span><select name="environment" [ngModel]="environment" (ngModelChange)="environment = $event; filter()"><option value="">All environments</option><option>DEV</option><option>TEST</option></select></label>
+              <div class="filter-actions"><button mat-stroked-button type="submit">Search</button>@if(filtersActive()){<button mat-button type="button" (click)="clearFilters()">Clear</button>}</div>
             </form>
-            <div class="table-scroll"><table><thead><tr><th>Execution / order</th><th>Status</th><th>Environment</th><th>Started</th><th>Duration</th><th>Attempts</th><th></th></tr></thead><tbody>
-              @for(e of executions(); track e.id){<tr><td><code>{{e.id.slice(0,12)}}</code><small>{{e.orderId}}</small></td><td><span [class]="'pill ' + e.status">{{e.status}}</span></td><td><span class="env-label">{{e.environment}}</span></td><td>{{e.createdAt | date:'MMM d, HH:mm:ss'}}</td><td>{{duration(e.durationMs)}}</td><td>{{e.attempts}}</td><td><button mat-button (click)="inspect(e.id)" [attr.aria-label]="'Inspect ' + e.orderId">Inspect ↗</button></td></tr>}
-              @empty {<tr><td colspan="7" class="empty"><strong>No executions yet</strong><p>Run an integration above, or adjust your filters.</p></td></tr>}
-            </tbody></table></div><div class="pagination"><span>Page {{page}} of {{pages()}}</span><div><button mat-button [disabled]="page <= 1 || refreshing()" (click)="navigatePage(-1)">Previous</button><button mat-button [disabled]="page >= pages() || refreshing()" (click)="navigatePage(1)">Next</button></div></div>
+            @if(filtersPending()){ <p class="hint filter-hint">Press Search to apply the new search text.</p> }
+            <div class="table-scroll" tabindex="0" role="region" aria-label="Execution history table, scrolls horizontally">
+              <table><caption class="sr-only">Integration executions, newest first. Page {{page()}} of {{pages()}}.</caption><thead><tr><th scope="col">Execution / order</th><th scope="col">Status</th><th scope="col">Environment</th><th scope="col">Started</th><th scope="col">Duration</th><th scope="col">Attempts</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>
+              @for(e of executions(); track e.id){<tr [class.selected-row]="selected()?.id === e.id"><td><code>{{e.id.slice(0,12)}}</code><small>{{e.orderId}}</small></td><td><span [class]="'pill ' + e.status">{{e.status}}</span></td><td><span class="env-label">{{e.environment}}</span></td><td>{{e.createdAt | date:'MMM d, HH:mm:ss'}}</td><td>{{duration(e.durationMs)}}</td><td>{{e.attempts}}</td><td><button mat-button (click)="inspect(e.id)" [attr.aria-label]="'Inspect ' + e.orderId">Inspect ↗</button></td></tr>}
+              @empty {<tr><td colspan="7" class="empty">@if(section('executions').error && !section('executions').updatedAt){<strong>Execution history unavailable</strong><p>{{section('executions').error}}</p>} @else if(filtersActive()){<strong>No matching executions</strong><p>Adjust or clear the filters.</p>} @else {<strong>No executions yet</strong><p>Run an integration above, or adjust your filters.</p>}</td></tr>}
+            </tbody></table></div>
+            <nav class="pagination" aria-label="Execution history pages"><span>Page {{page()}} of {{pages()}}</span><div><button mat-button [disabled]="page() <= 1" (click)="navigatePage(-1)">Previous</button><button mat-button [disabled]="page() >= pages()" (click)="navigatePage(1)">Next</button></div></nav>
           </section>
         } @else {
           <section class="panel workload-note"><h2>Simulated workload monitoring</h2><p>This module demonstrates monitoring and investigation of lower-environment jobs. It does not connect to ESP dSeries, create schedules, or run automation scripts.</p>
           @if(role() === 'Operator'){<div class="job-actions"><label>Environment<select [(ngModel)]="runEnvironment"><option>DEV</option><option>TEST</option></select></label><button mat-stroked-button (click)="simulateJob(false)" [disabled]="busy()">Simulate success</button><button mat-stroked-button (click)="simulateJob(true)" [disabled]="busy()">Simulate failure</button></div>}</section>
-          <section class="panel"><div class="section-heading"><h2>Job execution history</h2><label>Filter environment<select [(ngModel)]="environment" (change)="refresh()"><option value="">All environments</option><option>DEV</option><option>TEST</option></select></label></div>
-            <div class="table-scroll"><table><thead><tr><th>Job</th><th>Environment</th><th>Status</th><th>Start</th><th>End</th><th></th></tr></thead><tbody>@for(j of jobs(); track j.id){<tr><td>{{j.name}}<small>{{j.id.slice(0,12)}}</small></td><td>{{j.environment}}</td><td><span [class]="'pill ' + j.status">{{j.status}}</span></td><td>{{j.startedAt | date:'MMM d, HH:mm:ss'}}</td><td>{{j.endedAt | date:'HH:mm:ss'}}</td><td><button mat-button (click)="job.set(j)">Investigate</button></td></tr>}</tbody></table></div>
+          <section class="panel" aria-labelledby="jobs-heading"><div class="section-heading"><h2 id="jobs-heading">Job execution history</h2><label>Filter environment<select [ngModel]="jobEnvironment" (ngModelChange)="jobEnvironment = $event; filterJobs()"><option value="">All environments</option><option>DEV</option><option>TEST</option></select></label></div>
+            <div class="table-scroll" tabindex="0" role="region" aria-label="Job execution history table, scrolls horizontally"><table><caption class="sr-only">Synthetic workload runs, newest first.</caption><thead><tr><th scope="col">Job</th><th scope="col">Environment</th><th scope="col">Status</th><th scope="col">Start</th><th scope="col">End</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>@for(j of jobs(); track j.id){<tr><td>{{j.name}}<small>{{j.id.slice(0,12)}}</small></td><td>{{j.environment}}</td><td><span [class]="'pill ' + j.status">{{j.status}}</span></td><td>{{j.startedAt | date:'MMM d, HH:mm:ss'}}</td><td>{{j.endedAt | date:'HH:mm:ss'}}</td><td><button mat-button (click)="job.set(j)" [attr.aria-label]="'Investigate job ' + j.id.slice(0,12)">Investigate</button></td></tr>} @empty {<tr><td colspan="6" class="empty"><strong>No workload runs</strong><p>Change the environment filter or simulate a run.</p></td></tr>}</tbody></table></div>
           </section>
-          @if(job(); as j){<section class="panel investigation"><div class="section-heading"><h2>Job investigation</h2><button mat-button (click)="job.set(null)">Close</button></div><code>{{j.id}}</code><h3>{{j.name}}</h3><p>{{j.details}}</p></section>}
+          @if(job(); as j){<section class="panel investigation" aria-label="Job investigation"><div class="section-heading"><h2>Job investigation</h2><button mat-button (click)="job.set(null)">Close</button></div><code>{{j.id}}</code><h3>{{j.name}}</h3><p>{{j.details}}</p></section>}
         }
         @if(selected(); as e){
-          <section class="panel investigation" aria-label="Execution investigation">
-            <div class="section-heading"><div><span class="eyebrow">EXECUTION INVESTIGATION</span><h2>{{e.orderId}} <span [class]="'pill ' + e.status">{{e.status}}</span></h2></div><button mat-stroked-button (click)="selected.set(null)">Close details</button></div>
+          <section class="panel investigation" id="investigation" tabindex="-1" aria-label="Execution investigation">
+            <div class="section-heading"><div><span class="eyebrow">EXECUTION INVESTIGATION</span><h2>{{e.orderId}} <span [class]="'pill ' + e.status">{{e.status}}</span></h2></div><button mat-stroked-button (click)="closeDetails()">Close details</button></div>
             <code class="execution-id">{{e.id}}</code>
+            @if(section('detail').error){<p class="inline-warning" role="status">Details could not be refreshed: {{section('detail').error}} Showing the last loaded state.</p>}
             @if(e.errorClass){<div class="alert error"><b>{{e.errorClass}}</b><p>{{e.troubleshooting}}</p></div>}
-            <div class="detail-grid"><div><h3>Execution timeline</h3><ol class="timeline">@for(log of e.logs; track log.id){<li><div><b>{{log.stage}}</b><time>{{log.timestamp | date:'HH:mm:ss'}}</time></div><p>{{log.message}}</p><small>Attempt {{log.attempt}} · {{log.level}}</small></li>}</ol></div>
-            <div><h3>Delivery details</h3><dl><dt>Environment</dt><dd>{{e.environment}}</dd><dt>Receipt</dt><dd>{{e.receiptId || 'Awaiting acceptance'}}</dd><dt>Manual retries</dt><dd>{{e.retryCount}}</dd></dl><h3>Mapped payload</h3><pre>{{e.mappedPayload || 'Payload will appear after validation.'}}</pre>
+            <div class="detail-grid"><div><h3>Execution timeline</h3><ol class="timeline">@for(log of e.logs; track log.id){<li [class]="'level-' + log.level"><div><b>{{log.stage}}</b><time [attr.datetime]="log.timestamp">{{log.timestamp | date:'HH:mm:ss'}}</time></div><p>{{log.message}}</p><small>Attempt {{log.attempt}} · {{log.level}}</small></li>}</ol></div>
+            <div><h3>Delivery details</h3><dl><dt>Environment</dt><dd>{{e.environment}}</dd><dt>Attempts</dt><dd>{{e.attempts}} of 3 this cycle</dd><dt>Receipt</dt><dd>{{e.receiptId || 'Awaiting acceptance'}}</dd><dt>Manual retries</dt><dd>{{e.retryCount}}</dd></dl><h3>Mapped payload</h3><pre tabindex="0" aria-label="Mapped ERP payload">{{e.mappedPayload || 'Payload will appear after validation.'}}</pre>
               @if(role() === 'Operator' && e.status === 'Failed'){<p class="hint">Retry clears the simulation and preserves the original transaction identity. Investigate real data conflicts first.</p><button mat-flat-button (click)="retry()" [disabled]="busy()">Safely retry execution</button>}
             </div></div>
           </section>
