@@ -13,9 +13,10 @@ import { DesignerComponent } from './designer/designer.component';
 import { ConnectionsComponent } from './connections.component';
 import { IntegrationsComponent } from './integrations.component';
 import { WorkbenchOverviewComponent } from './workbench-overview.component';
+import { ProjectComponent } from './project.component';
 import { CRM_SECTIONS } from './source.component';
 import { ERP_SECTIONS } from './target.component';
-import { DesignerSession, WORKBENCH_NAV, WORKSPACES, Workspace, sectionFromSlug, urlFor, workspaceOf } from './workspaces';
+import { DesignerSession, PRACTICE_PROJECT, WORKBENCH_NAV, WORKSPACES, Workspace, sectionFromSlug, urlFor, workspaceOf } from './workspaces';
 import { PIPELINE } from './catalog';
 
 /** Independently loaded dashboard sections. One failing never blanks another. */
@@ -35,7 +36,9 @@ const emptySections = (): Record<Section, SectionState> => ({
 });
 
 const VIEWS: { name: View; title: string; subtitle: string }[] = [
-  { name: 'Overview', title: 'Workbench overview', subtitle: 'Integration development at a glance: designs, connections, validation and recent runs.' },
+  { name: 'Overview', title: 'Integration Workbench', subtitle: 'Your integration development resources: projects, integrations, connections, mappings, monitoring and guides.' },
+  { name: 'Projects', title: 'Projects', subtitle: 'Projects group related integrations with their connections, lookups and libraries.' },
+  { name: 'Project', title: 'Practice Project', subtitle: 'Every integration and connection in this local workbench, organized as one project.' },
   { name: 'Integrations', title: 'Integrations', subtitle: 'Create, open, duplicate, import and export integration designs. Opening one enters the Designer.' },
   { name: 'Integration Designer', title: 'Integration Designer', subtitle: '' },
   { name: 'Connections', title: 'Connections', subtitle: 'Reusable connections to the approved internal applications. Addresses and credentials are resolved by the Hub.' },
@@ -51,7 +54,7 @@ const VIEWS: { name: View; title: string; subtitle: string }[] = [
 @Component({
   selector: 'app-root', standalone: true,
   imports: [CommonModule, FormsModule, MatButtonModule, RouterOutlet, SourceComponent, TargetComponent, MappingComponent, ScenariosComponent, DesignerComponent, ConnectionsComponent,
-    IntegrationsComponent, WorkbenchOverviewComponent],
+    IntegrationsComponent, WorkbenchOverviewComponent, ProjectComponent],
   templateUrl: './app.component.html'
 })
 export class AppComponent implements OnDestroy {
@@ -73,7 +76,19 @@ export class AppComponent implements OnDestroy {
   /** Workbench nav item for the current page (the Designer belongs to Integrations; Workloads to Monitoring). */
   activeNav = computed(() => {
     const v = this.view();
-    return v === 'Integration Designer' ? 'Integrations' : v === 'Workloads' ? 'Executions' : v === 'Guides' ? 'Scenarios' : v;
+    return v === 'Integration Designer' ? 'Integrations' : v === 'Workloads' ? 'Executions' : v === 'Guides' ? 'Scenarios' : v === 'Project' ? 'Projects' : v;
+  });
+  /** Breadcrumb trail after the workspace name (empty on a workspace's home page). */
+  crumbs = computed<{ label: string; go?: Focus | View }[]>(() => {
+    const v = this.view(), f = this.focus();
+    if (v === 'Source System' || v === 'Target System') return f?.section && f.section !== 'Dashboard' ? [{ label: f.section }] : [];
+    switch (v) {
+      case 'Overview': return [];
+      case 'Project': return [{ label: 'Projects', go: 'Projects' }, { label: PRACTICE_PROJECT.name }];
+      case 'Workloads': return [{ label: 'Monitoring', go: 'Executions' }, { label: 'Workloads' }];
+      case 'Guides': return [{ label: 'Guides', go: 'Scenarios' }, { label: f?.scenario ?? 'Walkthrough' }];
+      default: return [{ label: WORKBENCH_NAV.find(n => n.view === this.activeNav())?.label ?? this.viewInfo().title }];
+    }
   });
   activeSection = computed(() => this.focus()?.section ?? 'Dashboard');
   sidebarOpen = signal(false);
@@ -137,6 +152,8 @@ export class AppComponent implements OnDestroy {
     if (q.get('id')) f.id = q.get('id')!;
     if (q.get('run')) f.run = true;
     if (q.get('new')) f.create = true;
+    if (r.paramMap.get('project')) f.project = r.paramMap.get('project')!;
+    if (q.get('from') === 'project') f.from = 'project';
     this.view.set(view); this.focus.set(f); this.sidebarOpen.set(false);
     if (f.run && this.signedIn()) void this.prepareRun(f.kind === 'customer' ? 'CustomerSync' : 'SalesOrder', f.id);
     setTimeout(() => (f.run ? document.getElementById('run-console') : document.querySelector('.content'))?.scrollIntoView({ block: 'start' }));

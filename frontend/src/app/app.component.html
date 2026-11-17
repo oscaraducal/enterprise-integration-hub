@@ -25,7 +25,7 @@
 } @else {
   <div [class]="'app-shell ws-' + workspace()" [class.designer-mode]="designerOpen()">
     <header class="global-bar">
-      @if (!designerOpen()) { <button type="button" class="menu-toggle" (click)="sidebarOpen.set(!sidebarOpen())" [attr.aria-expanded]="sidebarOpen()" aria-controls="workspace-sidebar" aria-label="Toggle workspace navigation">☰</button> }
+      @if (!designerOpen() && workspace() !== 'workbench') { <button type="button" class="menu-toggle" (click)="sidebarOpen.set(!sidebarOpen())" [attr.aria-expanded]="sidebarOpen()" aria-controls="workspace-sidebar" aria-label="Toggle workspace navigation">☰</button> }
       <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span><span class="brand-name">Enterprise Integration Hub</span></div>
       <nav class="ws-switch" aria-label="Workspaces">
         @for (w of workspaces; track w.id) {
@@ -36,7 +36,7 @@
       <div class="global-actions"><span class="demo-tag">DEMO</span><span class="role">{{role()}}</span><button mat-button (click)="toggleTheme()" aria-label="Toggle theme">{{dark() ? 'Light' : 'Dark'}}</button><button mat-button (click)="logout()">Sign out</button></div>
     </header>
     <div class="shell-body">
-    @if (!designerOpen()) {
+    @if (!designerOpen() && workspace() !== 'workbench') {
     <aside class="sidebar" id="workspace-sidebar" [class.open]="sidebarOpen()">
       <div class="workspace-label"><span aria-hidden="true">{{workspaceInfo().icon}}</span> {{workspaceInfo().name}}<small>{{workspaceInfo().role}}</small></div>
       @switch (workspace()) {
@@ -50,11 +50,6 @@
             <button type="button" [attr.aria-current]="activeSection() === s ? 'page' : null" [class.active]="activeSection() === s" (click)="go({ view: 'Target System', section: s })">{{s}}</button> }</nav>
           <div class="sidebar-bottom"><span class="live-dot"></span> Target business system<p>Records the Hub imports, with history.</p><small>Business data only: integration authoring lives in the Workbench.</small></div>
         }
-        @default {
-          <nav aria-label="Integration Workbench navigation">@for (item of workbenchNav; track item.label) {
-            <button type="button" [attr.aria-label]="item.label" [attr.aria-current]="activeNav() === item.view ? 'page' : null" [class.active]="activeNav() === item.view" (click)="go(item.view)"><span aria-hidden="true">{{item.icon}}</span>{{item.label}}</button> }</nav>
-          <div class="sidebar-bottom"><span class="live-dot"></span> Local integration workbench<p>Legacy CRM → Hub → Modern ERP</p><small>Design-time only for new integrations. Fictional systems, synthetic data.</small></div>
-        }
       }
     </aside>
     @if (sidebarOpen()) { <div class="sidebar-scrim" (click)="sidebarOpen.set(false)" aria-hidden="true"></div> }
@@ -62,7 +57,16 @@
     <div class="workspace">
       <main class="content" [class.designer-content]="designerOpen()">
         @if (!designerOpen()) {
-        <div class="page-heading"><div><span class="eyebrow">{{workspaceInfo().name.toUpperCase()}} · {{workspaceInfo().role.toUpperCase()}}</span><h1>{{viewInfo().title}}</h1><p class="muted">{{viewInfo().subtitle}}</p></div>
+        @if (workspace() === 'workbench') {
+          <nav class="wb-tabs" aria-label="Integration Workbench navigation">@for (item of workbenchNav; track item.label) {
+            <button type="button" [attr.aria-label]="item.label" [attr.aria-current]="activeNav() === item.view ? 'page' : null" [class.active]="activeNav() === item.view" (click)="go(item.view)"><span aria-hidden="true">{{item.icon}}</span>{{item.label}}</button> }</nav>
+        }
+        <div class="page-heading"><div>
+          <nav class="crumbs page-crumbs" aria-label="Breadcrumb"><ol>
+            <li>@if (crumbs().length) { <button type="button" class="link-button" (click)="switchWorkspace(workspace())">{{workspaceInfo().name}}</button> } @else { <span aria-current="page">{{workspaceInfo().name}}</span> }</li>
+            @for (c of crumbs(); track c.label; let last = $last) { <li>@if (last || !c.go) { <span [attr.aria-current]="last ? 'page' : null">{{c.label}}</span> } @else { <button type="button" class="link-button" (click)="go(c.go)">{{c.label}}</button> }</li> }
+          </ol></nav>
+          <h1>{{viewInfo().title}}</h1><p class="muted">{{viewInfo().subtitle}}</p></div>
           <button mat-stroked-button class="refresh-button" (click)="manualRefresh()" [disabled]="refreshing()" [attr.aria-busy]="refreshing()"><span aria-hidden="true">↻</span>&nbsp;Refresh</button></div>
         }
         @if(error()){ <div class="alert error" role="alert">{{error()}} <button type="button" (click)="error.set('')" aria-label="Dismiss error">×</button></div> }
@@ -88,8 +92,10 @@
         @if(view() === 'Source System'){ <app-source [api]="api" [focus]="focus()" [refreshTick]="tick()" [showNav]="false" (sectionChange)="sectionChanged('Source System', $event)"></app-source> }
         @else if(view() === 'Target System'){ <app-target [api]="api" [focus]="focus()" [refreshTick]="tick()" [showNav]="false" (sectionChange)="sectionChanged('Target System', $event)" (inspect)="openExecution($event)" (open)="go($event)"></app-target> }
         @else if(view() === 'Overview'){ <app-workbench-overview [api]="api" (go)="go($event)"></app-workbench-overview> }
+        @else if(view() === 'Projects'){ <app-project [api]="api" mode="list" (go)="go($event)"></app-project> }
+        @else if(view() === 'Project'){ <app-project [api]="api" mode="detail" (go)="go($event)"></app-project> }
         @else if(view() === 'Integrations'){ <app-integrations [api]="api" [startCreate]="!!focus()?.create" (open)="go({ view: 'Integration Designer', flow: $event })"></app-integrations> }
-        @else if(view() === 'Integration Designer'){ @for (name of [focus()?.flow ?? '']; track name) { <app-designer [api]="api" [flowName]="name" (back)="go('Integrations')"></app-designer> } }
+        @else if(view() === 'Integration Designer'){ @for (name of [focus()?.flow ?? '']; track name) { <app-designer [api]="api" [flowName]="name" [backTo]="focus()?.from === 'project' ? 'project' : 'integrations'" (back)="go(focus()?.from === 'project' ? { view: 'Project' } : 'Integrations')"></app-designer> } }
         @else if(view() === 'Connections'){ <app-connections [api]="api" [startCreate]="!!focus()?.create"></app-connections> }
         @else if(view() === 'Mapping Studio'){ <app-mapping [api]="api" [focus]="focus()" (inspect)="openExecution($event)"></app-mapping> }
         @else if(view() === 'Scenarios'){ <app-scenarios mode="catalog" (open)="go($event)"></app-scenarios> }
