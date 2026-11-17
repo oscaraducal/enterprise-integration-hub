@@ -1,0 +1,48 @@
+services:
+  crm:
+    build:
+      context: .
+      args: { PROJECT: MockCrm }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      Services__ApiKey: ${SERVICE_KEY:?Run the setup script first}
+      ConnectionStrings__Database: Data Source=/data/crm.db
+    ports: ["127.0.0.1:5101:8080"]
+    volumes: [crm-data:/data]
+  erp:
+    build:
+      context: .
+      args: { PROJECT: MockErp }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      Services__ApiKey: ${SERVICE_KEY:?Run the setup script first}
+      ConnectionStrings__Database: Data Source=/data/erp.db
+    ports: ["127.0.0.1:5102:8080"]
+    volumes: [erp-data:/data]
+  hub:
+    build:
+      context: .
+      args: { PROJECT: Hub }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      Jwt__Key: ${JWT_KEY:?Run the setup script first}
+      Demo__Password: ${DEMO_PASSWORD:?Run the setup script first}
+      Services__ApiKey: ${SERVICE_KEY:?Run the setup script first}
+      Services__CRM: http://crm:8080/
+      Services__ERP: http://erp:8080/
+      Frontend__Origin: http://localhost:4200
+      ConnectionStrings__Database: Data Source=/data/hub.db
+    ports: ["127.0.0.1:5100:8080"]
+    volumes: [hub-data:/data]
+    depends_on: [crm, erp]
+  dashboard:
+    build: ./frontend
+    ports: ["127.0.0.1:4200:8080"]
+    depends_on: [hub]
+volumes:
+  crm-data:
+  erp-data:
+  hub-data:

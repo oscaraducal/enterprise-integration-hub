@@ -1,0 +1,84 @@
+name: Build and test
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Restore
+        run: dotnet restore EnterpriseIntegrationHub.slnx
+      - name: Build
+        run: dotnet build EnterpriseIntegrationHub.slnx -c Release --no-restore
+      - name: Backend tests
+        run: dotnet test EnterpriseIntegrationHub.slnx -c Release --no-build --logger trx --results-directory TestResults
+      - name: Install dashboard dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: Angular production build
+        working-directory: frontend
+        run: npm run build
+      - name: Install browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Start real APIs and run browser tests
+        shell: bash
+        env:
+          # Every browser test signs in; the 10/minute demo login limit would reject later tests with 429.
+          RateLimits__LoginPerMinute: '300'
+        run: |
+          node scripts/setup.mjs
+          set -a
+          source .env
+          set +a
+          node scripts/dev.mjs > /tmp/integration-services.log 2>&1 &
+          API_PID=$!
+          trap 'kill $API_PID 2>/dev/null || true' EXIT
+          for port in 5100 5101 5102; do
+            ready=0
+            for attempt in $(seq 1 90); do
+              if curl --fail --silent http://localhost:$port/health > /dev/null; then ready=1; break; fi
+              sleep 1
+            done
+            if [ "$ready" != 1 ]; then cat /tmp/integration-services.log; exit 1; fi
+          done
+          cd frontend
+          npm test
+      - name: Upload test reports and resolved dependency lock
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: verification-reports
+          path: |
+            TestResults
+            frontend/playwright-report
+            frontend/test-results
+            frontend/package-lock.json
+
+  docker-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Build and smoke-test Compose stack
+        shell: bash
+        run: |
+          node scripts/setup.mjs
+          trap 'docker compose down -v' EXIT
+          docker compose up --build -d
+          node scripts/smoke.mjs

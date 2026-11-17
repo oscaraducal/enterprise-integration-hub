@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="src/Shared/Shared.csproj" />
+  <Project Path="src/MockCrm/MockCrm.csproj" />
+  <Project Path="src/MockErp/MockErp.csproj" />
+  <Project Path="src/Hub/Hub.csproj" />
+  <Project Path="tests/Hub.Tests/Hub.Tests.csproj" />
+</Solution>
