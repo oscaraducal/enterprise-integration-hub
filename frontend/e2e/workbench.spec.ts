@@ -73,6 +73,7 @@ test('Connection Manager: wizard, safe test, operations and roles', async ({ pag
   await expect(detail).not.toContainText('http://');
   await page.screenshot({ path: 'test-results/readme-connections.png' });
   await page.keyboard.press('Escape');
+  await expect(detail).toHaveCount(0);
 });
 
 test('A new Application integration starts blank; configure the trigger and add invokes with +', async ({ page }) => {
@@ -243,8 +244,11 @@ test('Viewers can inspect connections and designs but not change them', async ({
   await nav(page, 'Connections');
   await expect(page.getByRole('button', { name: '+ Create connection' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Open connection LEGACY_CRM_REST' }).click();
-  await expect(page.getByRole('dialog', { name: 'Connection details' }).getByRole('button', { name: 'Test' })).toHaveCount(0);
+  const details = page.getByRole('dialog', { name: 'Connection details' });
+  await expect(details).toContainText('LEGACY_CRM_REST'); // wait until it has loaded before asserting absence or closing it
+  await expect(details.getByRole('button', { name: 'Test' })).toHaveCount(0);
   await page.keyboard.press('Escape');
+  await expect(details).toHaveCount(0);
   await nav(page, 'Integration Designer');
   await page.getByLabel('Flow', { exact: true }).selectOption('account-sync');
   await expect(page.getByRole('button', { name: /^Insert action at/ })).toHaveCount(0);
