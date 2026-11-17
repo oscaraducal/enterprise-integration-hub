@@ -100,3 +100,30 @@ Playwright starts Angular. Use `npx playwright show-report` for the HTML report.
 ## Delivery environment constraints
 
 The November 2026 changes were authored on a Windows 11 host with portable .NET 10 and Node.js 24. There, `dotnet build` (0 warnings) and the Angular production build were run locally. Windows Smart App Control blocked loading the freshly built, unsigned test assemblies, and Docker was not installed. So backend tests, browser tests and the Docker smoke test were verified only in GitHub Actions on Ubuntu. Docker Desktop was installed on that host afterwards (17 Nov 2026). The Compose stack and 22 API-level scenarios from [WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md) were then verified there. Backend unit tests remain blocked locally by Smart App Control; GitHub Actions is the evidence for those. Do not substitute a source review for a passing build. PR notes record observed CI outcomes and any unresolved limitations.
+
+## Portfolio lab coverage (v2)
+
+Backend (`tests/Hub.Tests/LabTests.cs`):
+| Area | Check |
+|---|---|
+| Customer mapping | Trim, collapse, lower-case, phone digits, status lookup; per-field errors without source values; catalog field names match the CRM JSON |
+| Order mapping | Unsupported currency reported on `currency` |
+| Classification | 422 UnknownAccount → MissingCustomer; AccountBlocked/other → TargetRejected; permanent |
+| Customer sync runner | Version and execution headers; Created/Updated/Unchanged/SkippedStale log text; missing email fails before the ERP; frozen payload and version reused on retry after CRM changes |
+| Order runner | MissingCustomer is permanent with SCN-001 guidance and a frozen payload; v1 PascalCase frozen payload still delivers |
+| Concurrency | Only one active customer sync (partial unique index); finished syncs don't block |
+| Schema upgrades | Hub, CRM and ERP v1 DDL upgraded in place twice (idempotent), rows preserved, seeds added once |
+| CRM API | Create/duplicate/validation, no-op save keeps the version, edits bump the version, revisions, ID immutability |
+| ERP API | Upsert policy and history; stored order fields; 422 rules; fixture-only manual edits; ownership transfer |
+| Middleware API | Customer-sync queueing rules (409 while active, kind/ID validation, v1 order contract); viewer/anonymous restrictions on every lab write; preview validity, errors, and **no executions / no ERP calls** |
+
+Browser (`frontend/e2e/lab.spec.ts`, real services, fresh database):
+1. SCN-001: open C-300 in the Legacy CRM → sync → Completed (Created) with source snapshot and mapped payload → open imported record → reconciliation "All fields match".
+2. SCN-002: create C-610 and ORD-610 in the CRM UI → run → MissingCustomer **failed at Target delivery** → sync C-610 → safely retry the same execution → ERP order 250075 PHP → reconciliation ✓.
+3. SCN-003: edit C-300 (email, OnHold) → version 2 with revision diff → sync → "updated … emailAddress, accountStatus" → ERP history before/after → re-sync Unchanged.
+4. Mapping Studio: C-400 shows the email error and no output; ORD-013 preview → 41025; no execution was created.
+5. Viewer: no create/sync/edit-fixture/run controls on lab pages.
+6. Catalog and guides: SCN-004 Planned, SCN-002 Implemented; a guide step opens ORD-013.
+7. All lab pages at 390px without page overflow.
+
+Local verification for this branch: `dotnet test` in the official `mcr.microsoft.com/dotnet/sdk:10.0` Linux container (82/82). Playwright against an isolated Compose project with its own volumes and ports (`E2E_BASE_URL`, 25/25). Neither touched the demo stack or its data.

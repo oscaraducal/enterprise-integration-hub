@@ -161,6 +161,17 @@ docker compose down
 
 Stops and removes the containers but **keeps** all demo data in volumes. Press Ctrl+C first if `docker compose up` is still attached to a terminal.
 
+## 15b. Back up demo data (optional, before upgrades or experiments)
+
+```powershell
+$b = "$HOME\Documents\eih-db-backups\$(Get-Date -Format yyyyMMdd-HHmmss)"
+foreach ($s in 'crm','erp','hub') { New-Item -ItemType Directory -Force "$b\$s" | Out-Null; docker compose cp "${s}:/data/." "$b\$s" }
+```
+
+Copy the **whole** `/data` directory. SQLite runs in WAL mode, so the newest changes may still be in `*.db-wal` / `*.db-shm` next to the `.db` file. Restoring from a `.db` file alone can silently lose recent executions.
+
+Upgrading from the first release (`feature/initial-implementation`) to the portfolio lab keeps existing data. On startup, each service adds the new columns, tables and seed records, and existing executions, receipts, orders and jobs are not modified.
+
 ## 16. Reset local demo data safely
 
 > **This permanently deletes every execution, receipt and workload record for this demo.** It affects only this project's volumes (`<folder>_crm-data`, `<folder>_erp-data`, `<folder>_hub-data`).

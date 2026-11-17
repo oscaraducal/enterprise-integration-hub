@@ -1,18 +1,20 @@
 # Enterprise Integration Hub
 
-[![Build and test](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml/badge.svg?branch=feature/initial-implementation)](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml)
+[![Build and test](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml/badge.svg?branch=feature/integration-portfolio-lab)](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml)
 ![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)
 ![Angular 21](https://img.shields.io/badge/Angular-21-DD0031)
 ![Synthetic data](https://img.shields.io/badge/data-synthetic%20only-2e7d32)
 
 **A CRM-to-ERP integration simulator with a monitoring and troubleshooting console.** Built with **C# / ASP.NET Core 10, Entity Framework Core, SQLite and Angular 21**, it shows the parts of enterprise integration that matter after the first successful HTTP call: execution tracking, failure classification, bounded automatic retries, safe manual replay, idempotent delivery, audit trails, and a dashboard that stays useful during an upstream outage.
 
+It is also an **interactive integration lab**. You create or edit fictional records in a *Legacy CRM*, inspect the source-to-target mapping in a **Mapping Studio**, run the integration, and then verify the record the *Modern ERP* actually stored, field by field.
+
 > **Portfolio disclaimer.** This is a personal engineering portfolio project. All systems (Mock CRM, Mock ERP) and all data are fictional. It is **not** an Oracle Integration Cloud, Dell Boomi or ESP dSeries implementation, it does not connect to any vendor platform, and it contains no employer-owned code, credentials, customer data or execution logs. The concepts it demonstrates (execution IDs, stage logs, retries and lower-environment job monitoring) reflect general integration-operations experience.
 
 ---
 
 ## Contents
-[Features](#features) · [Architecture](#architecture) · [Screenshots](#screenshots) · [Quick start](#quick-start-docker) · [Demo](#demo-in-five-minutes) · [Testing](#testing-and-verification) · [Tech stack](#technology-stack) · [Limitations](#known-mvp-limitations) · [Docs](#documentation)
+[Features](#features) · [Portfolio lab](#portfolio-lab-create-integrate-verify) · [Architecture](#architecture) · [Screenshots](#screenshots) · [Quick start](#quick-start-docker) · [Demo](#demo-in-five-minutes) · [Testing](#testing-and-verification) · [Tech stack](#technology-stack) · [Limitations](#known-mvp-limitations) · [Docs](#documentation)
 
 ## Features
 
@@ -39,6 +41,50 @@
 - Generated local credentials only, loopback-only ports and non-root containers.
 - Responsive console (mobile, tablet, desktop), light and dark themes, keyboard-accessible tables and 44px touch targets.
 
+## Portfolio lab: create, integrate, verify
+
+| Component | Business meaning | What you can do |
+|---|---|---|
+| **Legacy CRM** (source system) | An existing business application | Create and edit customers and sales orders; every customer edit is versioned with a revision history |
+| **Integration Middleware** (integration layer) | My integration work | Retrieve over REST, validate, map, deliver, track execution IDs, retry, prevent duplicates, preview mappings |
+| **Modern ERP** (target system) | The receiving application | Browse imported customers and orders, their source IDs, import times and execution IDs; reconcile them with the source |
+
+| Scenario | Status | What it demonstrates |
+|---|---|---|
+| [SCN-001 Customer Master Synchronization](docs/scenarios/SCN-001-customer-master-sync.md) | Implemented | Required-field validation, normalization, create-if-missing, one account per customer |
+| [SCN-002 Sales Order Integration](docs/scenarios/SCN-002-sales-order-integration.md) | Implemented | Minor-unit conversion, currency validation, stored mapped orders, idempotency, the customer prerequisite |
+| [SCN-003 Customer Update Synchronization](docs/scenarios/SCN-003-customer-update-sync.md) | Implemented | Versioned upsert: changed fields audited with before/after values; older versions never overwrite newer ones |
+| [SCN-004 Retail Item Master](docs/scenarios/SCN-004-retail-item-master.md) · [SCN-005 Purchase Order](docs/scenarios/SCN-005-purchase-order.md) | Planned | Documented designs only (fictional merchandising → WMS) |
+
+Each implemented scenario has an in-app **guided walkthrough** with buttons that jump to the right screen and record, a glossary for non-technical viewers, and a [scenario document](docs/scenarios/README.md) covering schemas, mapping tables, sample JSON, endpoints, database changes, errors, retries, reconciliation and tests.
+
+**Mapping Studio.** Source fields are on the left, transformation rules in the centre and target fields on the right. The rules are rendered from the same C# mapping the integration executes. **Preview mapping** shows the input and output JSON and per-field validation errors. It never creates an execution, writes data or calls the ERP.
+
+![Mapping Studio for ORD-013: source fields, transformation rules and ERP target fields with input and output JSON](docs/screenshots/lab-mapping-studio.png)
+
+**Reconciliation.** In the Modern ERP, **Compare with source** recomputes the expected value of every field from the live CRM record and compares it with what the ERP stored.
+
+![Modern ERP customer C-300 with import history and a reconciliation table where every field matches](docs/screenshots/lab-reconciliation.png)
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**A prerequisite, explained:** ORD-610 belongs to a customer the ERP does not know yet. The execution shows *where* it failed (target delivery) and *what to do* (run SCN-001, then **Safely retry**).
+
+<img src="docs/screenshots/lab-missing-customer.png" alt="Failed sales order execution showing MissingCustomer at the target delivery stage with guidance">
+</td>
+<td width="50%" valign="top">
+
+**An audited update (SCN-003):** the ERP history shows only the changed fields, before and after, linked to the execution that delivered them.
+
+<img src="docs/screenshots/lab-update-history.png" alt="Modern ERP customer history with an Updated entry showing old and new email and status">
+</td>
+</tr>
+</table>
+
+![Scenario catalog with SCN-001 to SCN-003 implemented and the integration pipeline](docs/screenshots/lab-scenarios.png)
+
 ## Architecture
 
 ```mermaid
@@ -48,21 +94,24 @@ flowchart LR
     subgraph Hub["Integration Middleware (ASP.NET Core 10)"]
       direction TB
       API["REST API<br/>auth · validation · metrics"] --> Q[("SQLite<br/>executions · audit logs · jobs")]
+      LAB["Lab API<br/>source/target proxies · mapping preview"]
       W["Background worker<br/>classify · retry · recover"] --> Q
     end
-    W -->|"GET order · service key"| CRM["Mock CRM API<br/>synthetic customers/orders"]
-    W -->|"POST mapped order · service key"| ERP["Mock ERP API<br/>idempotency + receipts"]
+    W -->|"GET order/customer · service key"| CRM["Legacy CRM API<br/>versioned customers · orders"]
+    W -->|"POST order · PUT customer upsert"| ERP["Modern ERP API<br/>stored imports · history · idempotency"]
+    LAB -->|"fixed routes · service key"| CRM
+    LAB -->|"fixed routes · service key"| ERP
     CRM --> CrmDb[("SQLite")]
     ERP --> ErpDb[("SQLite")]
 ```
 
-**Data flow:** an operator queues a source order (HTTP 202). The worker claims it, then fetches the order from the CRM, validates it, maps it and freezes the payload, then posts it to the ERP with the execution ID. Every stage is persisted to the timeline. Transient failures are rescheduled with backoff until the 3-attempt budget is spent. Permanent failures stop for investigation. ERP idempotency makes replays safe after lost responses or crashes. This is *at-least-once delivery with idempotent acceptance*, not distributed exactly-once.
+**Data flow:** an operator queues a source order or customer (HTTP 202). The worker claims it, then fetches the order from the CRM, validates it, maps it and freezes the payload, then posts it to the ERP with the execution ID. Every stage is persisted to the timeline. Transient failures are rescheduled with backoff until the 3-attempt budget is spent. Permanent failures stop for investigation. ERP idempotency makes replays safe after lost responses or crashes. This is *at-least-once delivery with idempotent acceptance*, not distributed exactly-once.
 
 Details: [ARCHITECTURE.md](ARCHITECTURE.md) (lifecycle state machine, audit trail, crash recovery, dashboard loading model).
 
 ## Screenshots
 
-These are real screenshots, captured by the Playwright browser tests in [CI run 44046733351](https://github.com/oscaraducal/enterprise-integration-hub/actions/runs/44046733351) against the actual Mock CRM, Middleware and Mock ERP services. All data is synthetic.
+All screenshots are real: they were captured by the Playwright browser tests against the running Docker Compose stack (Legacy CRM, Middleware and Modern ERP containers) on Windows 11 with Docker Desktop. CI captures the same images on every run. All data is synthetic.
 
 **Integration monitoring dashboard** shows live metrics, status distribution, the CRM → Middleware → ERP route, and the operator-only run form.
 
@@ -102,7 +151,7 @@ Prerequisites: **Git, Node.js 24, Docker Desktop / Engine with Compose**. Window
 ```sh
 git clone https://github.com/oscaraducal/enterprise-integration-hub.git
 cd enterprise-integration-hub
-git switch feature/initial-implementation
+git switch feature/integration-portfolio-lab   # the lab; the earlier MVP is on feature/initial-implementation
 node scripts/setup.mjs        # writes random local credentials to the git-ignored .env
 docker compose up --build
 ```
@@ -149,6 +198,8 @@ The dashboard proxies `/api` to the middleware, and service keys never reach the
 | 4 | Run **ORD-001** again | Duplicate source order rejected |
 | 5 | `docker compose stop crm` | Partial-outage notice; history and investigation still live |
 | 6 | Sign in as **viewer** | Read-only role enforced by the API, not only hidden in the UI |
+| 7 | **Guides → SCN-002**: Mapping Studio for ORD-013, run it, sync C-300, safely retry | A prerequisite failure explained and resolved; reconciliation ✓ |
+| 8 | Edit C-300 in the **Legacy CRM**, then sync (SCN-003) | Versioned update with before/after history in the **Modern ERP** |
 
 The full script is in [docs/DEMO.md](docs/DEMO.md).
 
@@ -156,14 +207,14 @@ The full script is in [docs/DEMO.md](docs/DEMO.md).
 
 | Suite | What it covers | Where it runs |
 |---|---|---|
-| Backend (xUnit) | Mapping, classification, backoff, retries, retry budget, crash recovery, idempotency, audit trail, auth/roles, partial CRM outage at the API, mock CRM/ERP contracts | `dotnet test` · CI |
+| Backend (xUnit) | Mapping (orders and customers), classification, backoff, retries, retry budget, crash recovery, idempotency, audit trail, auth/roles, partial CRM outage, CRM customer CRUD/versioning, ERP storage and upsert policy, fixture rules, preview side-effect isolation, v1 → v2 schema upgrades | `dotnet test` · CI |
 | Angular production build | Type-checked templates, SCSS, bundle budget | `npm run build` · CI |
-| Browser (Playwright, Chromium) | Real CRM/ERP/middleware end to end, plus injected partial outages, stale-response races, filters and pagination, sign-out and expiry, keyboard tables, mobile/tablet/desktop layouts | `npm test` · CI |
+| Browser (Playwright, Chromium) | Real CRM/ERP/middleware end to end: SCN-001/002/003 through the UI with reconciliation, Mapping Studio, viewer restrictions, plus injected partial outages, stale-response races, filters and pagination, sign-out and expiry, keyboard tables, mobile/tablet/desktop layouts | `npm test` · CI |
 | Docker smoke test | Compose stack, nginx proxy, JWT login, CRM mapping, ERP retry and receipt | CI |
 
-**Latest verified run** ([44046733351](https://github.com/oscaraducal/enterprise-integration-hub/actions/runs/44046733351), 17 Nov 2026): Release build passed, 53/53 backend tests passed, Angular production build passed, 18/18 Chromium tests passed, Docker Compose smoke test passed.
+**Verified on this branch** (17 Nov 2026, Windows 11 host): the backend suite ran in the official .NET 10 SDK Linux container, **82/82 passed**; the Chromium suite ran against an isolated Docker Compose stack, **25/25 passed**. CI results for this branch are recorded on its pull request.
 
-Results come from GitHub Actions, not from this README. See the [latest CI runs](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml) and the PR [oscaraducal/enterprise-integration-hub#1](https://github.com/oscaraducal/enterprise-integration-hub/pull/1) for the recorded outcomes. Test catalogue and local instructions: [TEST_CASES.md](TEST_CASES.md).
+Results come from GitHub Actions, not from this README. See the [latest CI runs](https://github.com/oscaraducal/enterprise-integration-hub/actions/workflows/ci.yml) and the pull requests for the recorded outcomes. Test catalogue and local instructions: [TEST_CASES.md](TEST_CASES.md).
 
 ## Technology stack
 
@@ -180,7 +231,8 @@ Results come from GitHub Actions, not from this README. See the [latest CI runs]
 
 - **Local demonstration only.** Startup refuses non-Development/Testing environments. It uses HTTP, a shared generated demo password and a simple service key. It is not hardened for internet exposure.
 - **Single replica.** Crash recovery assumes one middleware process. There are no distributed leases, message broker or outbox.
-- **Schema:** `EnsureCreated` instead of versioned migrations. DEV/TEST are labels in one database, not isolated environments.
+- **Schema:** `EnsureCreated` plus small additive, idempotent upgrades (new columns, tables and indexes) instead of versioned migrations. Existing demo data is kept, but there are no down-migrations. DEV/TEST are labels in one database, not isolated environments.
+- **Lab scope:** mappings are defined in code and rendered by the Mapping Studio; there is no arbitrary schema designer, scripting or connector framework. SCN-004/005 are documented designs, not implementations.
 - **Delivery:** at-least-once with idempotent acceptance, not exactly-once. Metrics are aggregated in-process for modest demo volumes.
 - **Auth:** two fixed demo accounts, memory-only 30-minute tokens and no refresh tokens. A page reload signs out.
 - **Workloads** are synthetic history records. Nothing is scheduled or executed.
@@ -189,6 +241,7 @@ Results come from GitHub Actions, not from this README. See the [latest CI runs]
 
 | Document | Purpose |
 |---|---|
+| [docs/scenarios/](docs/scenarios/README.md) | Scenario catalog: SCN-001…003 implemented, SCN-004/005 planned |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Components, lifecycle, retry and recovery rules, audit trail, dashboard loading |
 | [API_DOCUMENTATION.md](API_DOCUMENTATION.md) | Endpoints, contracts, scenarios, error classes |
 | [TEST_CASES.md](TEST_CASES.md) | Automated and manual test catalogue |

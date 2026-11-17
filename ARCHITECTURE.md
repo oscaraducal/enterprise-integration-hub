@@ -109,3 +109,39 @@ Logs carry execution ID, stage, attempt and status. Persisted messages are contr
 ## Storage evolution
 
 Separate SQLite databases give each API ownership of its state. Fresh schema creation is appropriate for this disposable demo. A production evolution would introduce versioned EF migrations, durable message transport/outbox coordination, distributed worker leases, retention policies, centralized identity and operational dashboards. Those capabilities are not claimed by this MVP.
+
+## Portfolio lab (v2)
+
+```mermaid
+flowchart LR
+    CRMUI["Legacy CRM page"] & MAP["Mapping Studio"] & ERPUI["Modern ERP page"] -->|JWT| LAB["Middleware lab API<br/>/api/source · /api/target · /api/mappings"]
+    LAB -->|"fixed routes + service key"| CRM["Legacy CRM<br/>customers (versioned) · orders"]
+    LAB -->|"fixed routes + service key"| ERP["Modern ERP<br/>customer master · imported orders · history"]
+    RUN["IntegrationRunner<br/>SalesOrder · CustomerSync"] --> CRM
+    RUN --> ERP
+```
+
+### Two integration styles, two policies
+| | SalesOrder (SCN-002) | CustomerSync (SCN-001/003) |
+|---|---|---|
+| Data | Immutable transaction | Mutable master data |
+| Middleware key | `OrderId` unique: one execution per order, ever | Each sync is a new execution; partial unique index `IX_Executions_ActiveCustomerSync` allows one active sync per customer |
+| Frozen on first mapping | Mapped payload | Mapped payload **and** source version |
+| ERP key and rule | `externalOrderId` + fingerprint: replay or 409 | `accountCode` upsert: Created / Updated / Unchanged / SkippedStale (older versions never overwrite newer) |
+| Target business rules | Account must exist and be ACTIVE (422) | Required fields, status enum |
+
+The mapping rules live once in `Integration.Shared.Mapping` / `MappingCatalog`. Executions, the preview endpoint and the ERP reconciliation view all use them, so the Mapping Studio can never drift from runtime behaviour.
+
+### Schema evolution without data loss
+All three services still call `EnsureCreated` for a fresh database, then run an **additive, idempotent** upgrade (`SchemaUpgrade`):
+- `ALTER TABLE … ADD COLUMN` for new nullable or defaulted columns (detected with `PRAGMA table_info`);
+- `CREATE TABLE/INDEX IF NOT EXISTS` for new tables (`CustomerRevisions`, `ErpCustomers`, `CustomerHistory`) and the partial index;
+- one-time backfills that only fill empty values (v1 execution `SourceId`; contact fields of the two original seed customers);
+- seed records inserted only when their ID is missing.
+
+Nothing is dropped, renamed or rewritten. Upgrades are tested against the exact v1 DDL (`SchemaUpgradeTests`) and were applied in place to a live v1 Docker demo stack: every execution, receipt, order and job was preserved, verified row by row against a backup.
+
+The SQLite databases run in **WAL mode**, so recent changes can live in `*.db-wal` files. Back up a service by copying its whole data directory (`docker compose cp crm:/data/. backup/crm/`), not just the `.db` file. This is deliberately not a migration framework; production would use versioned EF Core migrations.
+
+### Target fixtures
+C-100/C-200 are seeded in the ERP as `Origin=Fixture` ("migrated at go-live"), so existing order demos work without a prior customer sync. Only fixtures accept manual edits (`FixtureEdit` history with the operator name). The first integration import takes ownership (`Origin=Import`) and is recorded in the history.
